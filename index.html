@@ -225,12 +225,21 @@ button{font-family:inherit;}
 .day-seg.chunk.live{
   animation:chunkpulse 1.8s ease-in-out infinite;
 }
+.day-seg.chunk.new{
+  transform-origin:left center;
+  animation:segGrow .5s cubic-bezier(.2,.8,.2,1) both;
+}
 @media (prefers-reduced-motion: reduce){
   .day-seg.chunk.live{animation:none;}
+  .day-seg.chunk.new{animation:none;}
 }
 @keyframes chunkpulse{
   0%,100%{opacity:1;}
   50%{opacity:.72;}
+}
+@keyframes segGrow{
+  from{transform:scaleX(0);opacity:.3;}
+  to{transform:scaleX(1);opacity:1;}
 }
 .now-marker{
   position:absolute;
@@ -258,6 +267,7 @@ button{font-family:inherit;}
 /* ---------- Log ---------- */
 .log{display:flex;flex-direction:column;gap:14px;}
 .log-head{display:flex;flex-direction:column;gap:3px;}
+.log-head-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .log h2{
   font-size:0.76rem;
   color:var(--ink-faint);
@@ -265,6 +275,16 @@ button{font-family:inherit;}
   text-transform:uppercase;
 }
 .log-date{font-size:0.85rem;color:var(--ink-soft);margin:0;}
+.streak-pill{
+  font-size:0.72rem;
+  font-weight:600;
+  color:var(--accent-strong);
+  background:var(--accent-soft);
+  padding:3px 10px;
+  border-radius:999px;
+  letter-spacing:.01em;
+  white-space:nowrap;
+}
 .log-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
 .log-list li{
   display:flex;
@@ -316,6 +336,32 @@ body.focusing .focus-vignette{
 }
 @media (prefers-reduced-motion: reduce){
   body.focusing .focus-vignette{animation:none;}
+}
+
+/* ---------- Stat toast ---------- */
+.toast{
+  position:fixed;
+  left:50%;
+  bottom:24px;
+  transform:translateX(-50%) translateY(10px);
+  opacity:0;
+  pointer-events:none;
+  background:var(--ink);
+  color:var(--paper);
+  font-size:0.85rem;
+  font-weight:500;
+  padding:11px 20px;
+  border-radius:999px;
+  box-shadow:var(--shadow);
+  z-index:50;
+  transition:opacity .25s ease, transform .25s ease;
+  max-width:calc(100% - 32px);
+  text-align:center;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+@media (prefers-reduced-motion: reduce){
+  .toast{transition:opacity .25s ease;}
+  .toast.show{transform:translateX(-50%) translateY(10px);}
 }
 
 /* ---------- Overlays ---------- */
@@ -510,13 +556,18 @@ input[type="time"], input[type="date"], select{
 
   <section class="log">
     <div class="log-head">
-      <h2>Today</h2>
+      <div class="log-head-row">
+        <h2>Today</h2>
+        <span class="streak-pill" id="streakPill" hidden></span>
+      </div>
       <p class="log-date" id="dateLabel"></p>
     </div>
     <ul class="log-list" id="logList"></ul>
     <p class="log-empty" id="logEmpty">No sessions yet</p>
   </section>
 </div>
+
+<div class="toast" id="statToast" aria-live="polite"></div>
 
 <!-- Journal modal -->
 <div class="overlay center" id="journalOverlay" hidden>
@@ -695,6 +746,20 @@ input[type="time"], input[type="date"], select{
     if (l.active) active = l.active;
   })();
 
+  /* Sessions already on disk at boot don't replay the day-bar "new chunk"
+     grow-in animation - only ones logged during this visit do. */
+  var animatedChunkIds = {};
+  sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
+
+  /* ---------------- reward cues: haptics + sound hook ---------------- */
+  function buzz(pattern){
+    try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e){}
+  }
+  /* Placeholder for sound effects - fill in with real audio later, e.g.
+     Web Audio tones or new Audio("start.mp3").play(). type is "start" or
+     "complete". Left silent on purpose. */
+  function playSound(type){}
+
   function persistSettings(next){
     settings = next;
     saveLocal();
@@ -725,7 +790,7 @@ input[type="time"], input[type="date"], select{
   var els = {};
   ["hh","mm","ss","timerCaption","toggleBtn","toggleShape","toggleLabel",
    "chunkInfo","chunkFill","chunkElapsed","dayBarTrack","wakeLabel","sleepLabel",
-   "logList","logEmpty","dateLabel"].forEach(function(id){ els[id] = document.getElementById(id); });
+   "logList","logEmpty","dateLabel","streakPill","statToast"].forEach(function(id){ els[id] = document.getElementById(id); });
 
   function updateDateLabel(){
     els.dateLabel.textContent = new Date().toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" });
@@ -758,7 +823,9 @@ input[type="time"], input[type="date"], select{
     sessions.filter(function(s){ return s.date === todayKey; }).forEach(function(s){
       var st = new Date(s.startTime), en = new Date(s.endTime);
       var seg = document.createElement("div");
-      seg.className = "day-seg chunk";
+      var isNew = !animatedChunkIds[s.id];
+      seg.className = "day-seg chunk" + (isNew ? " new" : "");
+      if (isNew) animatedChunkIds[s.id] = true;
       var l = pct(st), r = pct(en);
       seg.style.left = l + "%";
       seg.style.width = Math.max(0.6, r - l) + "%";
@@ -847,10 +914,47 @@ input[type="time"], input[type="date"], select{
     });
   }
 
+  function computeStreak(){
+    var byDay = {};
+    sessions.forEach(function(s){ byDay[s.date] = true; });
+    var cycle = getCycle(new Date(), settings);
+    var cursor = cycle.cycleStart;
+    if (!byDay[dateKey(cursor)]) cursor = addDays(cursor, -1);
+    var streak = 0;
+    while (byDay[dateKey(cursor)]) {
+      streak++;
+      cursor = addDays(cursor, -1);
+    }
+    return streak;
+  }
+
+  function renderStreak(){
+    var streak = computeStreak();
+    els.streakPill.hidden = streak < 2;
+    if (streak >= 2) els.streakPill.textContent = streak + "-day streak";
+  }
+
+  var toastTimer = null;
+  function showToast(text){
+    els.statToast.textContent = text;
+    els.statToast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ els.statToast.classList.remove("show"); }, 2800);
+  }
+
+  function todayStatText(){
+    var cycle = getCycle(new Date(), settings);
+    var todayKey = dateKey(cycle.cycleStart);
+    var todays = sessions.filter(function(s){ return s.date === todayKey; });
+    var mins = Math.round(todays.reduce(function(sum,s){ return sum + (s.durationSec||0); }, 0) / 60);
+    return "+" + mins + " min today · " + todays.length + " session" + (todays.length === 1 ? "" : "s");
+  }
+
   function renderAll(){
     updateDateLabel();
     renderToggle();
     renderLog();
+    renderStreak();
     tick();
   }
 
@@ -858,6 +962,8 @@ input[type="time"], input[type="date"], select{
   els.toggleBtn.addEventListener("click", function(){
     if (!active) {
       persistActive({ startTime: new Date().toISOString() });
+      playSound("start");
+      buzz(15);
       renderAll();
     } else {
       openJournal();
@@ -900,8 +1006,11 @@ input[type="time"], input[type="date"], select{
     persistNewSession(session);
     persistActive(null);
     active = null;
+    playSound("complete");
+    buzz([15,40,25]);
     closeJournal();
     renderAll();
+    showToast(todayStatText());
   });
 
   /* ---------------- edit session modal ---------------- */
