@@ -175,6 +175,14 @@ button{font-family:inherit;}
   70%{transform:scale(1.28);opacity:0;}
   100%{transform:scale(1.28);opacity:0;}
 }
+.toggle-btn.flash{animation:toggleFlash .7s ease-out;}
+@keyframes toggleFlash{
+  0%{box-shadow:0 0 0 0 rgba(var(--accent-rgb),0.55);}
+  100%{box-shadow:0 0 0 26px rgba(var(--accent-rgb),0);}
+}
+@media (prefers-reduced-motion: reduce){
+  .toggle-btn.flash{animation:none;}
+}
 .toggle-label{font-size:0.82rem;color:var(--ink-soft);}
 
 .chunk-info{
@@ -340,6 +348,27 @@ body.focusing .focus-vignette{
 }
 @media (prefers-reduced-motion: reduce){
   body.focusing .focus-vignette{animation:none;}
+}
+
+/* ---------- Achievement glow (plays once on completing a chunk) ---------- */
+.achievement-glow{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:30;
+  opacity:0;
+  background:radial-gradient(circle at 50% 50%, rgba(var(--accent-rgb),0.38) 0%, rgba(var(--accent-rgb),0.14) 35%, rgba(var(--accent-rgb),0) 70%);
+}
+.achievement-glow.flash{
+  animation:achievementFlash 1.1s ease-out;
+}
+@keyframes achievementFlash{
+  0%{opacity:0; transform:scale(0.85);}
+  18%{opacity:1; transform:scale(1);}
+  100%{opacity:0; transform:scale(1.18);}
+}
+@media (prefers-reduced-motion: reduce){
+  .achievement-glow.flash{animation:none;}
 }
 
 /* ---------- Stat toast ---------- */
@@ -606,6 +635,7 @@ input[type="time"], input[type="date"], select{
 <body>
 
 <div class="focus-vignette" aria-hidden="true"></div>
+<div class="achievement-glow" id="achievementGlow" aria-hidden="true"></div>
 
 <header class="topbar">
   <button class="icon-btn" id="settingsBtn" aria-label="Open settings">
@@ -1000,6 +1030,19 @@ input[type="time"], input[type="date"], select{
   /* ---------------- reward cues: haptics + sound hook ---------------- */
   function buzz(pattern){
     try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e){}
+  }
+  /* One-shot "achievement" flash on completing a chunk: a screen-wide
+     bloom plus a shockwave ring from the toggle button. Restarting the
+     animation on repeat completions needs remove -> reflow -> re-add. */
+  function flashAchievement(){
+    var glow = document.getElementById("achievementGlow");
+    glow.classList.remove("flash");
+    void glow.offsetWidth;
+    glow.classList.add("flash");
+
+    els.toggleBtn.classList.remove("flash");
+    void els.toggleBtn.offsetWidth;
+    els.toggleBtn.classList.add("flash");
   }
   /* ---------------- custom start/complete sounds (per device) ---------------- */
   var SOUND_DB_NAME = "timedown-sounds";
@@ -1489,6 +1532,7 @@ input[type="time"], input[type="date"], select{
     buzz([15,40,25]);
     closeJournal();
     renderAll();
+    flashAchievement();
     showToast(todayStatText());
   });
 
