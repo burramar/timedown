@@ -46,6 +46,12 @@ button{font-family:inherit;}
   left:16px;
   z-index:20;
 }
+.topbar-end{
+  position:fixed;
+  top:16px;
+  right:16px;
+  z-index:20;
+}
 .icon-btn{
   width:38px;height:38px;
   border-radius:10px;
@@ -440,6 +446,14 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
   animation:slidein .18s ease-out forwards;
 }
 @keyframes slidein{to{transform:translateX(0);}}
+.drawer-wrap-end{justify-content:flex-end;}
+.drawer-wrap-end .drawer{
+  border-right:none;
+  border-left:1px solid var(--line);
+  transform:translateX(12px);
+  animation-name:slideinEnd;
+}
+@keyframes slideinEnd{to{transform:translateX(0);}}
 .panel-head{display:flex;align-items:center;gap:12px;}
 .panel-head h2{font-size:1.1rem;flex:1;}
 .panel-section{display:flex;flex-direction:column;gap:10px;}
@@ -519,6 +533,78 @@ input[type="time"], input[type="date"], select{
 }
 .override-empty{font-size:0.8rem;color:var(--ink-faint);}
 
+/* Stats panel */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.stat-tile{
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:14px;
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+.stat-value{
+  font-family:"IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric:tabular-nums;
+  font-size:1.6rem;
+  font-weight:600;
+  color:var(--ink);
+}
+.stat-label{font-size:0.76rem;color:var(--ink-soft);}
+
+.stat-chart{
+  display:flex;
+  align-items:stretch;
+  gap:8px;
+  height:110px;
+}
+.stat-bar-col{
+  flex:1 1 0;
+  min-width:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:6px;
+}
+.stat-bar-track{
+  flex:1;
+  width:100%;
+  display:flex;
+  align-items:flex-end;
+  background:var(--surface-2);
+  border-radius:6px;
+  overflow:hidden;
+}
+.stat-bar-fill{
+  width:100%;
+  background:var(--accent);
+  opacity:.55;
+  border-radius:6px 6px 0 0;
+}
+.stat-bar-fill.today{opacity:1;}
+.stat-bar-label{font-size:0.7rem;color:var(--ink-faint);}
+.stat-bar-label.today{color:var(--accent-strong);font-weight:600;}
+
+.stat-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.stat-list li{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px;
+  padding:9px 0;
+  border-bottom:1px solid var(--line);
+  font-size:0.86rem;
+  color:var(--ink);
+}
+.stat-list li:last-child{border-bottom:none;}
+.stat-list li span:last-child{
+  font-family:"IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric:tabular-nums;
+  color:var(--ink-soft);
+  font-size:0.82rem;
+}
+
 @media (max-width:400px){
   .toggle-btn{width:68px;height:68px;}
 }
@@ -537,6 +623,16 @@ input[type="time"], input[type="date"], select{
     </svg>
   </button>
 </header>
+
+<div class="topbar-end">
+  <button class="icon-btn" id="statsBtn" aria-label="Open stats">
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+      <line x1="4" y1="15" x2="4" y2="8"/>
+      <line x1="9" y1="15" x2="9" y2="3"/>
+      <line x1="14" y1="15" x2="14" y2="10.5"/>
+    </svg>
+  </button>
+</div>
 
 <section class="hero">
   <div class="hero-timer" id="timerDisplay">
@@ -756,6 +852,49 @@ input[type="time"], input[type="date"], select{
     </section>
 
     <button class="btn-primary full" id="settingsSave">Save settings</button>
+  </div>
+</div>
+
+<!-- Stats drawer -->
+<div class="overlay drawer-wrap-end" id="statsOverlay" hidden>
+  <div class="drawer" role="dialog" aria-modal="true" aria-labelledby="statsTitle">
+    <div class="panel-head">
+      <h2 id="statsTitle">Stats</h2>
+      <button class="icon-btn" id="statsClose" aria-label="Close stats">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+        </svg>
+      </button>
+    </div>
+
+    <section class="panel-section">
+      <h3>This week</h3>
+      <div class="stat-grid">
+        <div class="stat-tile">
+          <span class="stat-value" id="statWeekMinutes">0</span>
+          <span class="stat-label">min focused</span>
+        </div>
+        <div class="stat-tile">
+          <span class="stat-value" id="statWeekSessions">0</span>
+          <span class="stat-label">sessions</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel-section">
+      <h3>Last 7 days</h3>
+      <div class="stat-chart" id="statChart"></div>
+    </section>
+
+    <section class="panel-section">
+      <h3>Personal bests</h3>
+      <ul class="stat-list">
+        <li><span>Longest session</span><span id="statLongestSession">—</span></li>
+        <li><span>Longest streak</span><span id="statLongestStreak">—</span></li>
+        <li><span>Most focused day</span><span id="statBestDay">—</span></li>
+        <li><span>Total time logged</span><span id="statTotalTime">—</span></li>
+      </ul>
+    </section>
   </div>
 </div>
 
@@ -1111,6 +1250,108 @@ input[type="time"], input[type="date"], select{
     return "+" + mins + " min today · " + todays.length + " session" + (todays.length === 1 ? "" : "s");
   }
 
+  /* ---------------- stats panel ---------------- */
+  function fmtDuration(sec){
+    var mins = Math.round(sec / 60);
+    var h = Math.floor(mins / 60), m = mins % 60;
+    return h > 0 ? (h + "h " + m + "m") : (m + "m");
+  }
+  function fmtShortDate(key){
+    return new Date(key + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  }
+  function getDayTotals(days){
+    var cycle = getCycle(new Date(), settings);
+    var todayKey = dateKey(cycle.cycleStart);
+    var secByDay = {};
+    sessions.forEach(function(s){ secByDay[s.date] = (secByDay[s.date] || 0) + (s.durationSec || 0); });
+    var out = [];
+    for (var i = days - 1; i >= 0; i--) {
+      var d = addDays(cycle.cycleStart, -i);
+      var key = dateKey(d);
+      out.push({
+        key: key,
+        label: d.toLocaleDateString(undefined, { weekday: "narrow" }),
+        minutes: Math.round((secByDay[key] || 0) / 60),
+        isToday: key === todayKey
+      });
+    }
+    return out;
+  }
+  function computeLongestStreak(){
+    var daySet = {};
+    sessions.forEach(function(s){ daySet[s.date] = true; });
+    var keys = Object.keys(daySet).sort();
+    if (!keys.length) return 0;
+    var longest = 1, run = 1;
+    for (var i = 1; i < keys.length; i++) {
+      var diffDays = Math.round((new Date(keys[i] + "T00:00:00") - new Date(keys[i-1] + "T00:00:00")) / 86400000);
+      run = diffDays === 1 ? run + 1 : 1;
+      longest = Math.max(longest, run);
+    }
+    return longest;
+  }
+  function computeStats(){
+    var week = getDayTotals(7);
+    var weekKeys = {};
+    week.forEach(function(d){ weekKeys[d.key] = true; });
+    var weekSessions = sessions.filter(function(s){ return weekKeys[s.date]; }).length;
+    var weekMinutes = week.reduce(function(sum, d){ return sum + d.minutes; }, 0);
+
+    var longestSessionSec = sessions.reduce(function(max, s){ return Math.max(max, s.durationSec || 0); }, 0);
+    var totalSec = sessions.reduce(function(sum, s){ return sum + (s.durationSec || 0); }, 0);
+
+    var secByDay = {};
+    sessions.forEach(function(s){ secByDay[s.date] = (secByDay[s.date] || 0) + (s.durationSec || 0); });
+    var bestDayKey = null, bestDaySec = 0;
+    Object.keys(secByDay).forEach(function(k){
+      if (secByDay[k] > bestDaySec) { bestDaySec = secByDay[k]; bestDayKey = k; }
+    });
+
+    return {
+      week: week, weekMinutes: weekMinutes, weekSessions: weekSessions,
+      longestSessionSec: longestSessionSec, totalSec: totalSec,
+      bestDayKey: bestDayKey, bestDaySec: bestDaySec,
+      longestStreak: computeLongestStreak()
+    };
+  }
+  function renderStatsPanel(){
+    var stats = computeStats();
+    document.getElementById("statWeekMinutes").textContent = stats.weekMinutes;
+    document.getElementById("statWeekSessions").textContent = stats.weekSessions;
+    document.getElementById("statLongestSession").textContent = stats.longestSessionSec ? fmtDuration(stats.longestSessionSec) : "—";
+    document.getElementById("statLongestStreak").textContent = stats.longestStreak ? (stats.longestStreak + (stats.longestStreak === 1 ? " day" : " days")) : "—";
+    document.getElementById("statBestDay").textContent = stats.bestDayKey ? (fmtDuration(stats.bestDaySec) + " · " + fmtShortDate(stats.bestDayKey)) : "—";
+    document.getElementById("statTotalTime").textContent = stats.totalSec ? fmtDuration(stats.totalSec) : "—";
+
+    var chart = document.getElementById("statChart");
+    chart.innerHTML = "";
+    var max = Math.max(1, Math.max.apply(null, stats.week.map(function(d){ return d.minutes; })));
+    stats.week.forEach(function(d){
+      var col = document.createElement("div");
+      col.className = "stat-bar-col";
+      var track = document.createElement("div");
+      track.className = "stat-bar-track";
+      var fill = document.createElement("div");
+      fill.className = "stat-bar-fill" + (d.isToday ? " today" : "");
+      fill.style.height = Math.max(3, (d.minutes / max) * 100) + "%";
+      fill.title = d.minutes + " min";
+      track.appendChild(fill);
+      var label = document.createElement("span");
+      label.className = "stat-bar-label" + (d.isToday ? " today" : "");
+      label.textContent = d.label;
+      col.appendChild(track);
+      col.appendChild(label);
+      chart.appendChild(col);
+    });
+  }
+
+  var statsOverlay = document.getElementById("statsOverlay");
+  function openStats(){ renderStatsPanel(); statsOverlay.hidden = false; }
+  function closeStats(){ statsOverlay.hidden = true; }
+  document.getElementById("statsBtn").addEventListener("click", openStats);
+  document.getElementById("statsClose").addEventListener("click", closeStats);
+  statsOverlay.addEventListener("click", function(e){ if (e.target === statsOverlay) closeStats(); });
+
   function renderAll(){
     updateDateLabel();
     renderToggle();
@@ -1273,6 +1514,7 @@ input[type="time"], input[type="date"], select{
     if (!journalOverlay.hidden) { closeJournal(); return; }
     if (!editOverlay.hidden) { closeEdit(); return; }
     if (!settingsOverlay.hidden) { closeSettings(); return; }
+    if (!statsOverlay.hidden) { closeStats(); return; }
   });
 
   /* ---------------- settings drawer ---------------- */
