@@ -1,0 +1,940 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timedown</title>
+<meta name="description" content="A minimalist daily focus timer: a live countdown to bedtime, one-tap productive sessions with a mini journal, and a day bar showing school hours and logged chunks.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23FAFAF6'/%3E%3Cpath d='M10 7h12M10 25h12M11 7c0 5 4 6 5 9-1 3-5 4-5 9M21 7c0 5-4 6-5 9 1 3 5 4 5 9' fill='none' stroke='%233E5C76' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --paper:#FAFAF6;
+  --surface:#FFFFFF;
+  --surface-2:#F1EFE8;
+  --line:#E3DFD3;
+  --ink:#34322B;
+  --ink-soft:#726C5C;
+  --ink-faint:#A79F8E;
+  --accent:#3E5C76;
+  --accent-strong:#2C4257;
+  --accent-soft:rgba(62,92,118,0.12);
+  --accent-ink:#F4F7FA;
+  --scrim:rgba(30,28,22,0.42);
+  --danger:#A64B34;
+  --shadow:0 1px 2px rgba(40,36,24,0.04), 0 10px 30px -12px rgba(40,36,24,0.16);
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+}
+h1,h2,h3,h4{font-weight:600;text-wrap:balance;margin:0;}
+button{font-family:inherit;}
+.mono{font-family:"IBM Plex Mono", ui-monospace, "SF Mono", monospace;font-variant-numeric:tabular-nums;}
+
+.page{
+  max-width:460px;
+  margin:0 auto;
+  padding-block:36px 56px;
+  padding-inline:18px;
+  display:flex;
+  flex-direction:column;
+  gap:28px;
+}
+
+/* ---------- Card ---------- */
+.card{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:22px;
+  box-shadow:var(--shadow);
+  padding:22px 22px 26px;
+  display:flex;
+  flex-direction:column;
+  gap:20px;
+}
+.card-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.icon-btn{
+  width:38px;height:38px;
+  border-radius:10px;
+  border:1px solid var(--line);
+  background:var(--surface);
+  color:var(--ink-soft);
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;
+  transition:background .15s ease, color .15s ease, border-color .15s ease;
+}
+.icon-btn:hover{background:var(--surface-2);color:var(--ink);}
+.icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.date-label{
+  font-size:0.8rem;
+  color:var(--ink-faint);
+  letter-spacing:.02em;
+}
+
+.timer{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+}
+.digit-group{
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:12px;
+  padding:8px 4px;
+  width:64px;
+  text-align:center;
+}
+.digit-group span{
+  font-size:clamp(1.6rem, 8vw, 2.15rem);
+  font-weight:600;
+  color:var(--ink);
+  line-height:1;
+}
+.timer .colon{
+  font-size:1.6rem;
+  color:var(--ink-faint);
+  font-weight:500;
+  padding-bottom:4px;
+}
+.timer-caption{
+  text-align:center;
+  margin-top:-10px;
+  font-size:0.78rem;
+  color:var(--ink-faint);
+  letter-spacing:.03em;
+}
+.timer-caption.past{color:var(--danger);}
+
+.chunk-zone{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:10px;
+}
+.toggle-btn{
+  width:76px;height:76px;
+  border-radius:50%;
+  border:2px solid var(--accent);
+  background:var(--surface);
+  cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  position:relative;
+  transition:background .2s ease;
+}
+.toggle-btn:focus-visible{outline:2px solid var(--accent);outline-offset:3px;}
+.toggle-shape{
+  width:16px;height:16px;
+  border-radius:50%;
+  background:var(--accent);
+  transition:border-radius .2s ease, width .2s ease, height .2s ease, background .2s ease;
+}
+.toggle-btn.active{background:var(--accent);}
+.toggle-btn.active .toggle-shape{
+  width:18px;height:18px;
+  border-radius:5px;
+  background:var(--accent-ink);
+}
+.toggle-btn.active::before{
+  content:"";
+  position:absolute;inset:-8px;
+  border-radius:50%;
+  border:1.5px solid var(--accent);
+  opacity:.55;
+  animation:pulse 2.2s ease-out infinite;
+}
+@media (prefers-reduced-motion: reduce){
+  .toggle-btn.active::before{animation:none;}
+}
+@keyframes pulse{
+  0%{transform:scale(0.9);opacity:.55;}
+  70%{transform:scale(1.28);opacity:0;}
+  100%{transform:scale(1.28);opacity:0;}
+}
+.toggle-label{font-size:0.82rem;color:var(--ink-soft);}
+
+.chunk-info{
+  width:100%;
+  max-width:230px;
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.chunk-bar-track{
+  flex:1;
+  height:6px;
+  border-radius:99px;
+  background:var(--surface-2);
+  overflow:hidden;
+}
+.chunk-bar-fill{
+  height:100%;
+  background:var(--accent);
+  border-radius:99px;
+  width:0%;
+  transition:width .3s linear;
+}
+.chunk-elapsed{font-size:0.76rem;color:var(--ink-soft);white-space:nowrap;}
+
+.day-bar-wrap{display:flex;flex-direction:column;gap:6px;}
+.day-bar-track{
+  position:relative;
+  height:16px;
+  border-radius:99px;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  overflow:visible;
+}
+.day-seg{
+  position:absolute;
+  top:0;bottom:0;
+  border-radius:2px;
+}
+.day-seg.school{
+  background:repeating-linear-gradient(135deg, var(--ink-faint) 0 3px, transparent 3px 7px);
+  opacity:.5;
+}
+.day-seg.chunk{
+  background:var(--accent);
+  border-radius:5px;
+}
+.day-seg.chunk.live{
+  animation:chunkpulse 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce){
+  .day-seg.chunk.live{animation:none;}
+}
+@keyframes chunkpulse{
+  0%,100%{opacity:1;}
+  50%{opacity:.72;}
+}
+.now-marker{
+  position:absolute;
+  top:-4px;bottom:-4px;
+  width:2px;
+  background:var(--ink);
+  border-radius:2px;
+}
+.now-marker::after{
+  content:"";
+  position:absolute;
+  top:-3px;left:50%;
+  transform:translateX(-50%);
+  width:6px;height:6px;
+  border-radius:50%;
+  background:var(--ink);
+}
+.day-bar-labels{
+  display:flex;
+  justify-content:space-between;
+  font-size:0.74rem;
+  color:var(--ink-faint);
+}
+
+/* ---------- Log ---------- */
+.log{display:flex;flex-direction:column;gap:10px;}
+.log h2{
+  font-size:0.76rem;
+  color:var(--ink-faint);
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.log-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
+.log-list li{
+  display:flex;
+  gap:14px;
+  padding:12px 2px;
+  border-bottom:1px solid var(--line);
+  align-items:baseline;
+}
+.log-list li:last-child{border-bottom:none;}
+.log-time{
+  font-size:0.78rem;
+  color:var(--ink-soft);
+  white-space:nowrap;
+  min-width:78px;
+}
+.log-journal{font-size:0.9rem;color:var(--ink);flex:1;}
+.log-empty{font-size:0.85rem;color:var(--ink-faint);padding:4px 2px;}
+
+footer.credit{
+  text-align:center;
+  font-size:0.72rem;
+  color:var(--ink-faint);
+}
+
+/* ---------- Overlays ---------- */
+.overlay{
+  position:fixed;inset:0;
+  background:var(--scrim);
+  display:flex;
+  z-index:40;
+}
+.overlay[hidden]{display:none;}
+.overlay.center{align-items:center;justify-content:center;padding:18px;}
+
+.modal{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:var(--shadow);
+  padding:22px;
+  width:100%;
+  max-width:400px;
+  display:flex;
+  flex-direction:column;
+  gap:14px;
+}
+.modal h2{font-size:1.05rem;}
+.modal-sub{font-size:0.82rem;color:var(--ink-soft);margin:-8px 0 0;}
+textarea{
+  width:100%;
+  resize:vertical;
+  min-height:88px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:var(--surface-2);
+  color:var(--ink);
+  font-family:inherit;
+  font-size:0.92rem;
+  padding:10px 12px;
+}
+textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px solid var(--accent);outline-offset:1px;}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;}
+.field-error{font-size:0.78rem;color:var(--danger);margin:-6px 0 0;display:none;}
+.field-error.show{display:block;}
+
+.btn-primary, .btn-ghost{
+  border-radius:10px;
+  padding:10px 16px;
+  font-size:0.88rem;
+  font-weight:600;
+  cursor:pointer;
+  border:1px solid transparent;
+}
+.btn-primary{background:var(--accent);color:var(--accent-ink);}
+.btn-primary:hover{background:var(--accent-strong);}
+.btn-ghost{background:transparent;color:var(--ink-soft);border-color:var(--line);}
+.btn-ghost:hover{background:var(--surface-2);color:var(--ink);}
+.btn-primary.full{width:100%;text-align:center;}
+.btn-ghost.small{padding:7px 12px;font-size:0.8rem;}
+
+/* Settings drawer */
+.drawer-wrap{justify-content:flex-start;}
+.drawer{
+  background:var(--surface);
+  border-right:1px solid var(--line);
+  height:100%;
+  width:min(360px, 88vw);
+  padding:22px 20px 28px;
+  overflow-y:auto;
+  display:flex;
+  flex-direction:column;
+  gap:24px;
+  transform:translateX(-12px);
+  animation:slidein .18s ease-out forwards;
+}
+@keyframes slidein{to{transform:translateX(0);}}
+.panel-head{display:flex;align-items:center;gap:12px;}
+.panel-head h2{font-size:1.1rem;flex:1;}
+.panel-section{display:flex;flex-direction:column;gap:10px;}
+.panel-section h3{font-size:0.78rem;color:var(--ink-faint);letter-spacing:.08em;text-transform:uppercase;}
+.field-row{display:flex;flex-direction:column;gap:5px;}
+.field-row label{font-size:0.86rem;color:var(--ink);}
+input[type="time"], input[type="date"], select{
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:var(--surface-2);
+  color:var(--ink);
+  font-family:inherit;
+  font-size:0.88rem;
+  padding:8px 10px;
+  width:100%;
+}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.hint{font-size:0.78rem;color:var(--ink-faint);margin:0;}
+.row-check{display:flex;align-items:center;gap:8px;font-size:0.9rem;color:var(--ink);}
+.row-check input{width:16px;height:16px;accent-color:var(--accent);}
+
+.weekday-picker{display:flex;gap:6px;flex-wrap:wrap;}
+.day-chip{
+  border:1px solid var(--line);
+  background:var(--surface-2);
+  color:var(--ink-soft);
+  border-radius:8px;
+  padding:6px 0;
+  width:38px;
+  text-align:center;
+  font-size:0.76rem;
+  cursor:pointer;
+}
+.day-chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);font-weight:600;}
+
+.override-add{
+  border-top:1px dashed var(--line);
+  padding-top:14px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+}
+.override-add h4{font-size:0.82rem;color:var(--ink);font-weight:600;}
+.override-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.override-list li{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  font-size:0.82rem;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:7px 10px;
+  color:var(--ink-soft);
+}
+.override-list .ov-del{
+  border:none;background:none;color:var(--danger);cursor:pointer;font-size:0.9rem;line-height:1;
+  padding:2px 4px;
+}
+.override-empty{font-size:0.8rem;color:var(--ink-faint);}
+
+@media (max-width:400px){
+  .digit-group{width:56px;}
+  .toggle-btn{width:68px;height:68px;}
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <div class="card" id="card">
+    <header class="card-head">
+      <button class="icon-btn" id="settingsBtn" aria-label="Open settings">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+          <line x1="2" y1="5" x2="16" y2="5"/><circle cx="11" cy="5" r="1.8" fill="currentColor" stroke="none"/>
+          <line x1="2" y1="9.5" x2="16" y2="9.5"/><circle cx="6.5" cy="9.5" r="1.8" fill="currentColor" stroke="none"/>
+          <line x1="2" y1="14" x2="16" y2="14"/><circle cx="13" cy="14" r="1.8" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
+      <span class="date-label" id="dateLabel"></span>
+    </header>
+
+    <div>
+      <div class="timer" id="timerDisplay">
+        <div class="digit-group"><span class="mono" id="hh">00</span></div>
+        <span class="colon mono">:</span>
+        <div class="digit-group"><span class="mono" id="mm">00</span></div>
+        <span class="colon mono">:</span>
+        <div class="digit-group"><span class="mono" id="ss">00</span></div>
+      </div>
+      <p class="timer-caption" id="timerCaption">until bedtime</p>
+    </div>
+
+    <div class="chunk-zone">
+      <button class="toggle-btn" id="toggleBtn" aria-pressed="false" aria-label="Start a productive session">
+        <span class="toggle-shape" id="toggleShape"></span>
+      </button>
+      <span class="toggle-label" id="toggleLabel">Tap to start a session</span>
+      <div class="chunk-info" id="chunkInfo" hidden>
+        <div class="chunk-bar-track"><div class="chunk-bar-fill" id="chunkFill"></div></div>
+        <span class="chunk-elapsed mono" id="chunkElapsed">00:00</span>
+      </div>
+    </div>
+
+    <div class="day-bar-wrap">
+      <div class="day-bar-track" id="dayBarTrack"></div>
+      <div class="day-bar-labels">
+        <span id="wakeLabel">—</span>
+        <span id="sleepLabel">—</span>
+      </div>
+    </div>
+  </div>
+
+  <section class="log">
+    <h2>Today</h2>
+    <ul class="log-list" id="logList"></ul>
+    <p class="log-empty" id="logEmpty">No sessions yet — start one above.</p>
+  </section>
+
+  <footer class="credit">Timedown — stored on this device</footer>
+</div>
+
+<!-- Journal modal -->
+<div class="overlay center" id="journalOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="journalTitle">
+    <h2 id="journalTitle">What did you do?</h2>
+    <p class="modal-sub" id="journalSub"></p>
+    <textarea id="journalText" placeholder="e.g. Drafted the intro section, fixed two bugs in the parser..." rows="4"></textarea>
+    <p class="field-error" id="journalError">Write a line before ending the session.</p>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="journalCancel">Keep going</button>
+      <button class="btn-primary" id="journalSave">Save &amp; end</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings drawer -->
+<div class="overlay drawer-wrap" id="settingsOverlay" hidden>
+  <div class="drawer" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="panel-head">
+      <h2 id="settingsTitle">Settings</h2>
+      <button class="icon-btn" id="settingsClose" aria-label="Close settings">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+          <line x1="3" y1="3" x2="13" y2="13"/><line x1="13" y1="3" x2="3" y2="13"/>
+        </svg>
+      </button>
+    </div>
+
+    <section class="panel-section">
+      <h3>Your day</h3>
+      <div class="two-col">
+        <div class="field-row">
+          <label for="wakeInput">Wake up</label>
+          <input type="time" id="wakeInput">
+        </div>
+        <div class="field-row">
+          <label for="sleepInput">Bedtime</label>
+          <input type="time" id="sleepInput">
+        </div>
+      </div>
+      <p class="hint" id="dayLengthHint"></p>
+    </section>
+
+    <section class="panel-section">
+      <h3>School hours</h3>
+      <label class="row-check"><input type="checkbox" id="schoolEnabled"> Recurring school block</label>
+      <div class="weekday-picker" id="weekdayPicker"></div>
+      <div class="two-col">
+        <div class="field-row">
+          <label for="schoolStart">Start</label>
+          <input type="time" id="schoolStart">
+        </div>
+        <div class="field-row">
+          <label for="schoolEnd">End</label>
+          <input type="time" id="schoolEnd">
+        </div>
+      </div>
+
+      <div class="override-add">
+        <h4>Change a specific day</h4>
+        <div class="field-row">
+          <label for="overrideDate">Date</label>
+          <input type="date" id="overrideDate">
+        </div>
+        <div class="field-row">
+          <label for="overrideType">For that day</label>
+          <select id="overrideType">
+            <option value="none">No school</option>
+            <option value="custom">Custom hours</option>
+            <option value="routine">Back to routine</option>
+          </select>
+        </div>
+        <div class="two-col" id="overrideCustomTimes" hidden>
+          <input type="time" id="overrideStart">
+          <input type="time" id="overrideEnd">
+        </div>
+        <button class="btn-ghost small" id="overrideAdd" type="button">Add override</button>
+      </div>
+      <ul class="override-list" id="overrideList"></ul>
+    </section>
+
+    <button class="btn-primary full" id="settingsSave">Save settings</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var DEFAULT_SETTINGS = {
+    wakeTime: "07:00",
+    sleepTime: "23:00",
+    schoolRoutine: { enabled: false, days: [1,2,3,4,5], start: "08:00", end: "15:00" },
+    schoolOverrides: {}
+  };
+  var CHUNK_TARGET_MS = 60*60*1000;
+  var LS_KEY = "timedown_v1";
+
+  function pad(n){ return String(n).padStart(2,"0"); }
+  function clone(o){ return JSON.parse(JSON.stringify(o)); }
+  function parseHM(str){ var p = (str||"00:00").split(":"); return { h: Number(p[0])||0, m: Number(p[1])||0 }; }
+  function combine(date, hm){ var d = new Date(date); d.setHours(hm.h, hm.m, 0, 0); return d; }
+  function addDays(date, n){ var d = new Date(date); d.setDate(d.getDate()+n); return d; }
+  function dateKey(d){ var x = new Date(d); return x.getFullYear()+"-"+pad(x.getMonth()+1)+"-"+pad(x.getDate()); }
+  function fmtTime(hm){
+    var h = hm.h % 12; if (h===0) h = 12;
+    return h + ":" + pad(hm.m) + (hm.h < 12 ? " AM" : " PM");
+  }
+  function fmtClockShort(d){
+    return (d.getHours()%12===0?12:d.getHours()%12) + ":" + pad(d.getMinutes()) + (d.getHours()<12?"a":"p");
+  }
+
+  function getCycle(now, settings){
+    var wake = parseHM(settings.wakeTime);
+    var sleep = parseHM(settings.sleepTime);
+    var cycleStart = combine(now, wake);
+    if (now < cycleStart) cycleStart = addDays(cycleStart, -1);
+    var cycleEnd = combine(cycleStart, sleep);
+    var sleepAbs = sleep.h*60+sleep.m, wakeAbs = wake.h*60+wake.m;
+    if (sleepAbs <= wakeAbs || cycleEnd <= cycleStart) cycleEnd = addDays(cycleEnd, 1);
+    return { cycleStart: cycleStart, cycleEnd: cycleEnd };
+  }
+
+  function getSchoolBlock(cycleStart, settings){
+    var key = dateKey(cycleStart);
+    var override = (settings.schoolOverrides||{})[key];
+    if (override && override.type === "none") return null;
+    if (override && override.type === "custom") return { start: override.start, end: override.end };
+    var routine = settings.schoolRoutine;
+    if (!routine || !routine.enabled) return null;
+    var weekday = cycleStart.getDay();
+    if ((routine.days||[]).indexOf(weekday) === -1) return null;
+    return { start: routine.start, end: routine.end };
+  }
+
+  /* ---------------- storage (this device only) ---------------- */
+  var settings = DEFAULT_SETTINGS;
+  var sessions = [];
+  var active = null;
+
+  function loadLocal(){
+    try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch(e){ return {}; }
+  }
+  function saveLocal(){
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: settings, sessions: sessions, active: active })); } catch(e){}
+  }
+  (function bootLocal(){
+    var l = loadLocal();
+    if (l.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), l.settings);
+    if (l.sessions) sessions = l.sessions;
+    if (l.active) active = l.active;
+  })();
+
+  function persistSettings(next){
+    settings = next;
+    saveLocal();
+    renderAll();
+  }
+  function persistActive(next){
+    active = next;
+    saveLocal();
+  }
+  function persistNewSession(session){
+    session = Object.assign({ id: "s-" + Date.now() }, session);
+    sessions = [session].concat(sessions);
+    saveLocal();
+    renderLog();
+  }
+
+  /* ---------------- rendering ---------------- */
+  var els = {};
+  ["hh","mm","ss","timerCaption","toggleBtn","toggleShape","toggleLabel",
+   "chunkInfo","chunkFill","chunkElapsed","dayBarTrack","wakeLabel","sleepLabel",
+   "logList","logEmpty","dateLabel"].forEach(function(id){ els[id] = document.getElementById(id); });
+
+  function updateDateLabel(){
+    els.dateLabel.textContent = new Date().toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" });
+  }
+
+  function renderDayBar(now, cycle){
+    var track = els.dayBarTrack;
+    track.innerHTML = "";
+    var total = cycle.cycleEnd - cycle.cycleStart;
+    if (total <= 0) return;
+
+    function pct(d){ return Math.min(100, Math.max(0, (d - cycle.cycleStart) / total * 100)); }
+
+    var school = getSchoolBlock(cycle.cycleStart, settings);
+    if (school) {
+      var sStart = combine(cycle.cycleStart, parseHM(school.start));
+      var sEnd = combine(cycle.cycleStart, parseHM(school.end));
+      if (sEnd <= sStart) sEnd = addDays(sEnd, 1);
+      if (sStart < cycle.cycleEnd && sEnd > cycle.cycleStart) {
+        var seg = document.createElement("div");
+        seg.className = "day-seg school";
+        var l = pct(sStart), r = pct(sEnd);
+        seg.style.left = l + "%";
+        seg.style.width = Math.max(0.5, r - l) + "%";
+        track.appendChild(seg);
+      }
+    }
+
+    var todayKey = dateKey(cycle.cycleStart);
+    sessions.filter(function(s){ return s.date === todayKey; }).forEach(function(s){
+      var st = new Date(s.startTime), en = new Date(s.endTime);
+      var seg = document.createElement("div");
+      seg.className = "day-seg chunk";
+      var l = pct(st), r = pct(en);
+      seg.style.left = l + "%";
+      seg.style.width = Math.max(0.6, r - l) + "%";
+      track.appendChild(seg);
+    });
+
+    if (active) {
+      var st2 = new Date(active.startTime);
+      var seg2 = document.createElement("div");
+      seg2.className = "day-seg chunk live";
+      var l2 = pct(st2), r2 = pct(now);
+      seg2.style.left = l2 + "%";
+      seg2.style.width = Math.max(0.6, r2 - l2) + "%";
+      track.appendChild(seg2);
+    }
+
+    if (now >= cycle.cycleStart && now <= cycle.cycleEnd) {
+      var marker = document.createElement("div");
+      marker.className = "now-marker";
+      marker.style.left = pct(now) + "%";
+      track.appendChild(marker);
+    }
+
+    els.wakeLabel.textContent = fmtTime(parseHM(settings.wakeTime));
+    els.sleepLabel.textContent = fmtTime(parseHM(settings.sleepTime));
+  }
+
+  function tick(){
+    var now = new Date();
+    var cycle = getCycle(now, settings);
+    var remaining = cycle.cycleEnd - now;
+    var past = remaining <= 0;
+    if (past) remaining = 0;
+    var totalSec = Math.floor(remaining/1000);
+    var h = Math.floor(totalSec/3600), m = Math.floor((totalSec%3600)/60), s = totalSec%60;
+    els.hh.textContent = pad(h); els.mm.textContent = pad(m); els.ss.textContent = pad(s);
+    els.timerCaption.textContent = past ? "past bedtime" : "until bedtime";
+    els.timerCaption.classList.toggle("past", past);
+
+    if (active) {
+      var elapsedMs = now - new Date(active.startTime);
+      var eSec = Math.max(0, Math.floor(elapsedMs/1000));
+      var em = Math.floor(eSec/60), es = eSec%60;
+      els.chunkElapsed.textContent = pad(em) + ":" + pad(es);
+      els.chunkFill.style.width = Math.min(100, elapsedMs / CHUNK_TARGET_MS * 100) + "%";
+    }
+
+    renderDayBar(now, cycle);
+  }
+
+  function renderToggle(){
+    var isActive = !!active;
+    els.toggleBtn.classList.toggle("active", isActive);
+    els.toggleBtn.setAttribute("aria-pressed", isActive ? "true" : "false");
+    els.toggleBtn.setAttribute("aria-label", isActive ? "End the current session" : "Start a productive session");
+    els.toggleLabel.textContent = isActive ? "Tap to end the session" : "Tap to start a session";
+    els.chunkInfo.hidden = !isActive;
+  }
+
+  function renderLog(){
+    var now = new Date();
+    var cycle = getCycle(now, settings);
+    var todayKey = dateKey(cycle.cycleStart);
+    var todays = sessions.filter(function(s){ return s.date === todayKey; })
+      .slice().sort(function(a,b){ return new Date(b.startTime) - new Date(a.startTime); });
+
+    els.logList.innerHTML = "";
+    els.logEmpty.hidden = todays.length > 0;
+    todays.forEach(function(s){
+      var li = document.createElement("li");
+      var time = document.createElement("span");
+      time.className = "log-time mono";
+      time.textContent = fmtClockShort(new Date(s.startTime)) + "–" + fmtClockShort(new Date(s.endTime));
+      var j = document.createElement("span");
+      j.className = "log-journal";
+      j.textContent = s.journal;
+      li.appendChild(time); li.appendChild(j);
+      els.logList.appendChild(li);
+    });
+  }
+
+  function renderAll(){
+    updateDateLabel();
+    renderToggle();
+    renderLog();
+    tick();
+  }
+
+  /* ---------------- toggle button ---------------- */
+  els.toggleBtn.addEventListener("click", function(){
+    if (!active) {
+      persistActive({ startTime: new Date().toISOString() });
+      renderAll();
+    } else {
+      openJournal();
+    }
+  });
+
+  /* ---------------- journal modal ---------------- */
+  var journalOverlay = document.getElementById("journalOverlay");
+  var journalText = document.getElementById("journalText");
+  var journalSub = document.getElementById("journalSub");
+  var journalError = document.getElementById("journalError");
+
+  function openJournal(){
+    if (!active) return;
+    var mins = Math.max(1, Math.round((Date.now() - new Date(active.startTime))/60000));
+    journalSub.textContent = "That session ran about " + mins + " min. What did you get done?";
+    journalText.value = "";
+    journalError.classList.remove("show");
+    journalOverlay.hidden = false;
+    setTimeout(function(){ journalText.focus(); }, 10);
+  }
+  function closeJournal(){ journalOverlay.hidden = true; }
+
+  document.getElementById("journalCancel").addEventListener("click", closeJournal);
+  journalOverlay.addEventListener("click", function(e){ if (e.target === journalOverlay) closeJournal(); });
+
+  document.getElementById("journalSave").addEventListener("click", function(){
+    var text = journalText.value.trim();
+    if (!text) { journalError.classList.add("show"); journalText.focus(); return; }
+    var endTime = new Date();
+    var startTime = new Date(active.startTime);
+    var cycle = getCycle(startTime, settings);
+    var session = {
+      date: dateKey(cycle.cycleStart),
+      startTime: active.startTime,
+      endTime: endTime.toISOString(),
+      durationSec: Math.round((endTime-startTime)/1000),
+      journal: text
+    };
+    persistNewSession(session);
+    persistActive(null);
+    active = null;
+    closeJournal();
+    renderAll();
+  });
+
+  document.addEventListener("keydown", function(e){
+    if (e.key === "Escape") {
+      if (!journalOverlay.hidden) closeJournal();
+      if (!settingsOverlay.hidden) closeSettings();
+    }
+  });
+
+  /* ---------------- settings drawer ---------------- */
+  var settingsOverlay = document.getElementById("settingsOverlay");
+  var draft = null;
+  var WEEKDAYS = [ {v:1,l:"M"}, {v:2,l:"T"}, {v:3,l:"W"}, {v:4,l:"T"}, {v:5,l:"F"}, {v:6,l:"S"}, {v:0,l:"S"} ];
+
+  function openSettings(){
+    draft = clone(settings);
+    document.getElementById("wakeInput").value = draft.wakeTime;
+    document.getElementById("sleepInput").value = draft.sleepTime;
+    document.getElementById("schoolEnabled").checked = !!draft.schoolRoutine.enabled;
+    document.getElementById("schoolStart").value = draft.schoolRoutine.start;
+    document.getElementById("schoolEnd").value = draft.schoolRoutine.end;
+    renderWeekdayPicker();
+    updateDayLengthHint();
+    document.getElementById("overrideDate").value = "";
+    document.getElementById("overrideType").value = "none";
+    document.getElementById("overrideCustomTimes").hidden = true;
+    renderOverrideList();
+    settingsOverlay.hidden = false;
+  }
+  function closeSettings(){ settingsOverlay.hidden = true; }
+
+  document.getElementById("settingsBtn").addEventListener("click", openSettings);
+  document.getElementById("settingsClose").addEventListener("click", closeSettings);
+  settingsOverlay.addEventListener("click", function(e){ if (e.target === settingsOverlay) closeSettings(); });
+
+  function updateDayLengthHint(){
+    var w = parseHM(document.getElementById("wakeInput").value || "00:00");
+    var s = parseHM(document.getElementById("sleepInput").value || "00:00");
+    var wm = w.h*60+w.m, sm = s.h*60+s.m;
+    var diff = sm - wm; if (diff <= 0) diff += 24*60;
+    var h = Math.floor(diff/60), m = diff%60;
+    document.getElementById("dayLengthHint").textContent = "That's " + h + "h " + (m? m+"m " : "") + "from wake to bedtime.";
+  }
+  document.getElementById("wakeInput").addEventListener("input", updateDayLengthHint);
+  document.getElementById("sleepInput").addEventListener("input", updateDayLengthHint);
+
+  function renderWeekdayPicker(){
+    var wrap = document.getElementById("weekdayPicker");
+    wrap.innerHTML = "";
+    WEEKDAYS.forEach(function(d){
+      var chip = document.createElement("div");
+      chip.className = "day-chip" + (draft.schoolRoutine.days.indexOf(d.v) !== -1 ? " on" : "");
+      chip.textContent = d.l;
+      chip.addEventListener("click", function(){
+        var idx = draft.schoolRoutine.days.indexOf(d.v);
+        if (idx === -1) draft.schoolRoutine.days.push(d.v); else draft.schoolRoutine.days.splice(idx,1);
+        renderWeekdayPicker();
+      });
+      wrap.appendChild(chip);
+    });
+  }
+  document.getElementById("schoolEnabled").addEventListener("change", function(e){
+    draft.schoolRoutine.enabled = e.target.checked;
+  });
+  document.getElementById("schoolStart").addEventListener("input", function(e){ draft.schoolRoutine.start = e.target.value; });
+  document.getElementById("schoolEnd").addEventListener("input", function(e){ draft.schoolRoutine.end = e.target.value; });
+
+  document.getElementById("overrideType").addEventListener("change", function(e){
+    document.getElementById("overrideCustomTimes").hidden = e.target.value !== "custom";
+  });
+
+  function renderOverrideList(){
+    var list = document.getElementById("overrideList");
+    list.innerHTML = "";
+    var keys = Object.keys(draft.schoolOverrides || {}).sort();
+    if (!keys.length) {
+      var p = document.createElement("li");
+      p.className = "override-empty";
+      p.textContent = "No date-specific changes yet.";
+      p.style.background = "none"; p.style.border = "none";
+      list.appendChild(p);
+      return;
+    }
+    keys.forEach(function(k){
+      var ov = draft.schoolOverrides[k];
+      var li = document.createElement("li");
+      var label = document.createElement("span");
+      var d = new Date(k+"T00:00:00");
+      var dtxt = d.toLocaleDateString(undefined, { month:"short", day:"numeric" });
+      var desc = ov.type === "none" ? "no school" : (ov.type === "custom" ? (ov.start+"–"+ov.end) : "back to routine");
+      label.textContent = dtxt + " — " + desc;
+      var del = document.createElement("button");
+      del.className = "ov-del"; del.type = "button"; del.textContent = "×";
+      del.setAttribute("aria-label", "Remove override for " + dtxt);
+      del.addEventListener("click", function(){ delete draft.schoolOverrides[k]; renderOverrideList(); });
+      li.appendChild(label); li.appendChild(del);
+      list.appendChild(li);
+    });
+  }
+
+  document.getElementById("overrideAdd").addEventListener("click", function(){
+    var dateVal = document.getElementById("overrideDate").value;
+    if (!dateVal) return;
+    var type = document.getElementById("overrideType").value;
+    if (type === "routine") {
+      delete draft.schoolOverrides[dateVal];
+    } else if (type === "none") {
+      draft.schoolOverrides[dateVal] = { type: "none" };
+    } else {
+      var st = document.getElementById("overrideStart").value || "08:00";
+      var en = document.getElementById("overrideEnd").value || "15:00";
+      draft.schoolOverrides[dateVal] = { type: "custom", start: st, end: en };
+    }
+    renderOverrideList();
+  });
+
+  document.getElementById("settingsSave").addEventListener("click", function(){
+    persistSettings(draft);
+    closeSettings();
+  });
+
+  /* ---------------- boot ---------------- */
+  renderAll();
+  setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>
