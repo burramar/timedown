@@ -1312,8 +1312,12 @@ input[type="time"], input[type="date"], select{
   settingsOverlay.addEventListener("click", function(e){ if (e.target === settingsOverlay) closeSettings(); });
 
   function updateDayLengthHint(){
-    var w = parseHM(document.getElementById("wakeInput").value || "00:00");
-    var s = parseHM(document.getElementById("sleepInput").value || "00:00");
+    var wakeVal = document.getElementById("wakeInput").value;
+    var sleepVal = document.getElementById("sleepInput").value;
+    if (wakeVal) draft.wakeTime = wakeVal;
+    if (sleepVal) draft.sleepTime = sleepVal;
+    var w = parseHM(wakeVal || "00:00");
+    var s = parseHM(sleepVal || "00:00");
     var wm = w.h*60+w.m, sm = s.h*60+s.m;
     var diff = sm - wm; if (diff <= 0) diff += 24*60;
     var h = Math.floor(diff/60), m = diff%60;
