@@ -461,6 +461,23 @@ input[type="time"], input[type="date"], select{
 .row-check{display:flex;align-items:center;gap:8px;font-size:0.9rem;color:var(--ink);}
 .row-check input{width:16px;height:16px;accent-color:var(--accent);}
 
+.sound-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:10px;
+  padding:10px 12px;
+}
+.sound-row-label{display:flex;flex-direction:column;gap:2px;}
+.sound-row-label span:first-child{font-size:0.86rem;color:var(--ink);font-weight:500;}
+.sound-status{font-size:0.76rem;color:var(--ink-faint);}
+.sound-row-actions{display:flex;gap:6px;flex-wrap:wrap;}
+.file-btn{display:inline-flex;align-items:center;cursor:pointer;}
+
 .weekday-picker{display:flex;gap:6px;flex-wrap:wrap;}
 .day-chip{
   border:1px solid var(--line);
@@ -675,6 +692,41 @@ input[type="time"], input[type="date"], select{
     </section>
 
     <section class="panel-section">
+      <h3>Sounds</h3>
+      <p class="hint">Pick a short clip to play when you start or end a session. Stored only on this device.</p>
+
+      <div class="sound-row">
+        <div class="sound-row-label">
+          <span>Start</span>
+          <span class="sound-status" id="startSoundStatus">None set</span>
+        </div>
+        <div class="sound-row-actions">
+          <button class="btn-ghost small" id="startSoundPlay" type="button">Preview</button>
+          <label class="btn-ghost small file-btn">
+            Choose
+            <input type="file" id="startSoundFile" accept="audio/*" hidden>
+          </label>
+          <button class="btn-ghost small danger" id="startSoundClear" type="button">Remove</button>
+        </div>
+      </div>
+
+      <div class="sound-row">
+        <div class="sound-row-label">
+          <span>Complete</span>
+          <span class="sound-status" id="completeSoundStatus">None set</span>
+        </div>
+        <div class="sound-row-actions">
+          <button class="btn-ghost small" id="completeSoundPlay" type="button">Preview</button>
+          <label class="btn-ghost small file-btn">
+            Choose
+            <input type="file" id="completeSoundFile" accept="audio/*" hidden>
+          </label>
+          <button class="btn-ghost small danger" id="completeSoundClear" type="button">Remove</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel-section">
       <h3>Sync across devices</h3>
       <p class="hint">Copy this code and paste it into Settings on another device to bring your data there. Applying a pasted code replaces that device's sessions and settings, so copy from here first if you don't want to lose anything on the device you're pasting into.</p>
       <div class="field-row">
@@ -772,10 +824,90 @@ input[type="time"], input[type="date"], select{
   function buzz(pattern){
     try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e){}
   }
-  /* Placeholder for sound effects - fill in with real audio later, e.g.
-     Web Audio tones or new Audio("start.mp3").play(). type is "start" or
-     "complete". Left silent on purpose. */
-  function playSound(type){}
+  /* ---------------- custom start/complete sounds (per device) ---------------- */
+  var SOUND_DB_NAME = "timedown-sounds";
+  var SOUND_STORE = "clips";
+  var soundAudioCache = {};
+
+  function openSoundDb(){
+    return new Promise(function(resolve, reject){
+      if (!window.indexedDB) { reject(new Error("no indexedDB")); return; }
+      var req = indexedDB.open(SOUND_DB_NAME, 1);
+      req.onupgradeneeded = function(){ req.result.createObjectStore(SOUND_STORE); };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    });
+  }
+  function saveSoundBlob(type, blob){
+    return openSoundDb().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(SOUND_STORE, "readwrite");
+        tx.objectStore(SOUND_STORE).put(blob, type);
+        tx.oncomplete = function(){ delete soundAudioCache[type]; resolve(); };
+        tx.onerror = function(){ reject(tx.error); };
+      });
+    });
+  }
+  function deleteSoundBlob(type){
+    return openSoundDb().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(SOUND_STORE, "readwrite");
+        tx.objectStore(SOUND_STORE).delete(type);
+        tx.oncomplete = function(){ delete soundAudioCache[type]; resolve(); };
+        tx.onerror = function(){ reject(tx.error); };
+      });
+    });
+  }
+  function loadSoundBlob(type){
+    return openSoundDb().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction(SOUND_STORE, "readonly");
+        var req = tx.objectStore(SOUND_STORE).get(type);
+        req.onsuccess = function(){ resolve(req.result || null); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    });
+  }
+  /* type is "start" or "complete". No-ops (silently) if nothing has been
+     picked for that type yet, or IndexedDB isn't available. */
+  function playSound(type){
+    if (soundAudioCache[type]) {
+      soundAudioCache[type].currentTime = 0;
+      soundAudioCache[type].play().catch(function(){});
+      return;
+    }
+    loadSoundBlob(type).then(function(blob){
+      if (!blob) return;
+      var audio = new Audio(URL.createObjectURL(blob));
+      soundAudioCache[type] = audio;
+      audio.play().catch(function(){});
+    }).catch(function(){});
+  }
+
+  function setupSoundPicker(type, fileId, statusId, playId, clearId){
+    var fileInput = document.getElementById(fileId);
+    var statusEl = document.getElementById(statusId);
+
+    function refreshStatus(){
+      loadSoundBlob(type).then(function(blob){
+        statusEl.textContent = blob ? "Custom sound set" : "None set";
+      }).catch(function(){ statusEl.textContent = "None set"; });
+    }
+
+    fileInput.addEventListener("change", function(){
+      var file = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!file) return;
+      saveSoundBlob(type, file).then(refreshStatus);
+    });
+    document.getElementById(playId).addEventListener("click", function(){ playSound(type); });
+    document.getElementById(clearId).addEventListener("click", function(){ deleteSoundBlob(type).then(refreshStatus); });
+
+    refreshStatus();
+    return refreshStatus;
+  }
+  var refreshStartSoundStatus = setupSoundPicker("start", "startSoundFile", "startSoundStatus", "startSoundPlay", "startSoundClear");
+  var refreshCompleteSoundStatus = setupSoundPicker("complete", "completeSoundFile", "completeSoundStatus", "completeSoundPlay", "completeSoundClear");
 
   function persistSettings(next){
     settings = next;
@@ -1116,6 +1248,8 @@ input[type="time"], input[type="date"], select{
     document.getElementById("overrideType").value = "none";
     document.getElementById("overrideCustomTimes").hidden = true;
     renderOverrideList();
+    refreshStartSoundStatus();
+    refreshCompleteSoundStatus();
     document.getElementById("syncCode").value = generateSyncCode();
     document.getElementById("syncPasteInput").value = "";
     document.getElementById("syncError").classList.remove("show");
