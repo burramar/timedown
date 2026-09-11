@@ -276,15 +276,19 @@ button{font-family:inherit;}
 }
 .log-date{font-size:0.85rem;color:var(--ink-soft);margin:0;}
 .streak-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
   font-size:0.72rem;
   font-weight:600;
   color:var(--accent-strong);
   background:var(--accent-soft);
-  padding:3px 10px;
+  padding:3px 10px 3px 8px;
   border-radius:999px;
   letter-spacing:.01em;
   white-space:nowrap;
 }
+.streak-pill svg{flex-shrink:0;}
 .log-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;}
 .log-list li{
   display:flex;
@@ -1250,10 +1254,13 @@ input[type="time"], input[type="date"], select{
     return streak;
   }
 
+  var FLAME_SVG = '<svg width="12" height="12" viewBox="0 0 14 14" fill="currentColor" stroke="none"><path d="M7 1.5C10 5.5 11.5 8 11.5 9.8A4.5 4.5 0 0 1 2.5 9.8C2.5 8 4 5.5 7 1.5Z"/></svg>';
   function renderStreak(){
     var streak = computeStreak();
-    els.streakPill.hidden = streak < 2;
-    if (streak >= 2) els.streakPill.textContent = streak + "-day streak";
+    els.streakPill.hidden = streak < 1;
+    if (streak >= 1) {
+      els.streakPill.innerHTML = FLAME_SVG + "<span>" + streak + (streak === 1 ? " day" : " days") + "</span>";
+    }
   }
 
   var toastTimer = null;
