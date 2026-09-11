@@ -888,6 +888,20 @@ input[type="time"], input[type="date"], select{
     </div>
 
     <section class="panel-section">
+      <h3>Today</h3>
+      <div class="stat-grid">
+        <div class="stat-tile">
+          <span class="stat-value" id="statTodayMinutes">0</span>
+          <span class="stat-label">min focused</span>
+        </div>
+        <div class="stat-tile">
+          <span class="stat-value" id="statTodayChunks">0</span>
+          <span class="stat-label">chunks</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel-section">
       <h3>This week</h3>
       <div class="stat-grid">
         <div class="stat-tile">
@@ -1368,6 +1382,9 @@ input[type="time"], input[type="date"], select{
   }
   function computeStats(){
     var week = getDayTotals(7);
+    var today = week[week.length - 1];
+    var todayChunks = sessions.filter(function(s){ return s.date === today.key; }).length;
+
     var weekKeys = {};
     week.forEach(function(d){ weekKeys[d.key] = true; });
     var weekSessions = sessions.filter(function(s){ return weekKeys[s.date]; }).length;
@@ -1385,6 +1402,7 @@ input[type="time"], input[type="date"], select{
 
     return {
       week: week, weekMinutes: weekMinutes, weekSessions: weekSessions,
+      todayMinutes: today.minutes, todayChunks: todayChunks,
       longestSessionSec: longestSessionSec, totalSec: totalSec,
       bestDayKey: bestDayKey, bestDaySec: bestDaySec,
       longestStreak: computeLongestStreak()
@@ -1392,6 +1410,8 @@ input[type="time"], input[type="date"], select{
   }
   function renderStatsPanel(){
     var stats = computeStats();
+    document.getElementById("statTodayMinutes").textContent = stats.todayMinutes;
+    document.getElementById("statTodayChunks").textContent = stats.todayChunks;
     document.getElementById("statWeekMinutes").textContent = stats.weekMinutes;
     document.getElementById("statWeekSessions").textContent = stats.weekSessions;
     document.getElementById("statLongestSession").textContent = stats.longestSessionSec ? fmtDuration(stats.longestSessionSec) : "—";
