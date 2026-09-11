@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Timedown</title>
-<meta name="description" content="A minimalist daily focus timer: a live countdown to bedtime, one-tap productive sessions with a mini journal, and a day bar showing school hours and logged chunks.">
+<meta name="description" content="A minimalist daily focus timer: a live countdown to bedtime, one-tap productive chunks with a mini journal, and a day bar showing school hours and logged chunks.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23FAFAF6'/%3E%3Cpath d='M10 7h12M10 25h12M11 7c0 5 4 6 5 9-1 3-5 4-5 9M21 7c0 5-4 6-5 9 1 3 5 4 5 9' fill='none' stroke='%233E5C76' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -45,12 +45,8 @@ button{font-family:inherit;}
   top:16px;
   left:16px;
   z-index:20;
-}
-.topbar-end{
-  position:fixed;
-  top:16px;
-  right:16px;
-  z-index:20;
+  display:flex;
+  gap:8px;
 }
 .icon-btn{
   width:38px;height:38px;
@@ -446,14 +442,6 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
   animation:slidein .18s ease-out forwards;
 }
 @keyframes slidein{to{transform:translateX(0);}}
-.drawer-wrap-end{justify-content:flex-end;}
-.drawer-wrap-end .drawer{
-  border-right:none;
-  border-left:1px solid var(--line);
-  transform:translateX(12px);
-  animation-name:slideinEnd;
-}
-@keyframes slideinEnd{to{transform:translateX(0);}}
 .panel-head{display:flex;align-items:center;gap:12px;}
 .panel-head h2{font-size:1.1rem;flex:1;}
 .panel-section{display:flex;flex-direction:column;gap:10px;}
@@ -559,6 +547,7 @@ input[type="time"], input[type="date"], select{
   gap:8px;
   height:110px;
 }
+.stat-line-chart{width:100%;height:auto;display:block;}
 .stat-bar-col{
   flex:1 1 0;
   min-width:0;
@@ -622,9 +611,6 @@ input[type="time"], input[type="date"], select{
       <line x1="2" y1="14" x2="16" y2="14"/><circle cx="13" cy="14" r="1.8" fill="currentColor" stroke="none"/>
     </svg>
   </button>
-</header>
-
-<div class="topbar-end">
   <button class="icon-btn" id="statsBtn" aria-label="Open stats">
     <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
       <line x1="4" y1="15" x2="4" y2="8"/>
@@ -632,7 +618,7 @@ input[type="time"], input[type="date"], select{
       <line x1="14" y1="15" x2="14" y2="10.5"/>
     </svg>
   </button>
-</div>
+</header>
 
 <section class="hero">
   <div class="hero-timer" id="timerDisplay">
@@ -648,10 +634,10 @@ input[type="time"], input[type="date"], select{
 <div class="page">
   <div class="card" id="card">
     <div class="chunk-zone">
-      <button class="toggle-btn" id="toggleBtn" aria-pressed="false" aria-label="Start a productive session">
+      <button class="toggle-btn" id="toggleBtn" aria-pressed="false" aria-label="Start a productive chunk">
         <span class="toggle-shape" id="toggleShape"></span>
       </button>
-      <span class="toggle-label" id="toggleLabel">Tap to start a session</span>
+      <span class="toggle-label" id="toggleLabel">Tap to start a chunk</span>
       <div class="chunk-info" id="chunkInfo" hidden>
         <div class="chunk-bar-track"><div class="chunk-bar-fill" id="chunkFill"></div></div>
         <span class="chunk-elapsed mono" id="chunkElapsed">00:00</span>
@@ -676,7 +662,7 @@ input[type="time"], input[type="date"], select{
       <p class="log-date" id="dateLabel"></p>
     </div>
     <ul class="log-list" id="logList"></ul>
-    <p class="log-empty" id="logEmpty">No sessions yet</p>
+    <p class="log-empty" id="logEmpty">No chunks yet</p>
   </section>
 </div>
 
@@ -688,7 +674,7 @@ input[type="time"], input[type="date"], select{
     <h2 id="journalTitle">What did you do?</h2>
     <p class="modal-sub" id="journalSub"></p>
     <textarea id="journalText" placeholder="e.g. Drafted the intro section, fixed two bugs in the parser..." rows="4"></textarea>
-    <p class="field-error" id="journalError">Write a line before ending the session.</p>
+    <p class="field-error" id="journalError">Write a line before ending the chunk.</p>
     <div class="modal-actions">
       <button class="btn-ghost" id="journalCancel">Keep going</button>
       <button class="btn-primary" id="journalSave">Save &amp; end</button>
@@ -699,7 +685,7 @@ input[type="time"], input[type="date"], select{
 <!-- Edit session modal -->
 <div class="overlay center" id="editOverlay" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="editTitle">
-    <h2 id="editTitle">Edit session</h2>
+    <h2 id="editTitle">Edit chunk</h2>
     <div class="two-col">
       <div class="field-row">
         <label for="editStart">Start</label>
@@ -801,7 +787,7 @@ input[type="time"], input[type="date"], select{
 
     <section class="panel-section">
       <h3>Sounds</h3>
-      <p class="hint">Pick a short clip to play when you start or end a session. Stored only on this device.</p>
+      <p class="hint">Pick a short clip to play when you start or end a chunk. Stored only on this device.</p>
 
       <div class="sound-row">
         <div class="sound-row-label">
@@ -836,7 +822,7 @@ input[type="time"], input[type="date"], select{
 
     <section class="panel-section">
       <h3>Sync across devices</h3>
-      <p class="hint">Copy this code and paste it into Settings on another device to bring your data there. Applying a pasted code replaces that device's sessions and settings, so copy from here first if you don't want to lose anything on the device you're pasting into.</p>
+      <p class="hint">Copy this code and paste it into Settings on another device to bring your data there. Applying a pasted code replaces that device's chunks and settings, so copy from here first if you don't want to lose anything on the device you're pasting into.</p>
       <div class="field-row">
         <label for="syncCode">This device's code</label>
         <textarea id="syncCode" class="mono" rows="3" readonly></textarea>
@@ -856,7 +842,7 @@ input[type="time"], input[type="date"], select{
 </div>
 
 <!-- Stats drawer -->
-<div class="overlay drawer-wrap-end" id="statsOverlay" hidden>
+<div class="overlay drawer-wrap" id="statsOverlay" hidden>
   <div class="drawer" role="dialog" aria-modal="true" aria-labelledby="statsTitle">
     <div class="panel-head">
       <h2 id="statsTitle">Stats</h2>
@@ -876,7 +862,7 @@ input[type="time"], input[type="date"], select{
         </div>
         <div class="stat-tile">
           <span class="stat-value" id="statWeekSessions">0</span>
-          <span class="stat-label">sessions</span>
+          <span class="stat-label">chunks</span>
         </div>
       </div>
     </section>
@@ -887,9 +873,15 @@ input[type="time"], input[type="date"], select{
     </section>
 
     <section class="panel-section">
+      <h3>Relative productivity</h3>
+      <p class="hint">Time logged that day, divided by time available that day (day length minus school hours).</p>
+      <svg class="stat-line-chart" id="statLineChart" viewBox="0 0 300 84" role="img" aria-label="Relative productivity over the last 7 days"></svg>
+    </section>
+
+    <section class="panel-section">
       <h3>Personal bests</h3>
       <ul class="stat-list">
-        <li><span>Longest session</span><span id="statLongestSession">—</span></li>
+        <li><span>Longest chunk</span><span id="statLongestSession">—</span></li>
         <li><span>Longest streak</span><span id="statLongestStreak">—</span></li>
         <li><span>Most focused day</span><span id="statBestDay">—</span></li>
         <li><span>Total time logged</span><span id="statTotalTime">—</span></li>
@@ -946,6 +938,36 @@ input[type="time"], input[type="date"], select{
     var weekday = cycleStart.getDay();
     if ((routine.days||[]).indexOf(weekday) === -1) return null;
     return { start: routine.start, end: routine.end };
+  }
+
+  /* Like getCycle, but for a specific calendar day rather than "now" -
+     used to look at past days for stats. */
+  function getCycleForDate(day, settings){
+    var wake = parseHM(settings.wakeTime);
+    var sleep = parseHM(settings.sleepTime);
+    var cycleStart = combine(day, wake);
+    var cycleEnd = combine(cycleStart, sleep);
+    var sleepAbs = sleep.h*60+sleep.m, wakeAbs = wake.h*60+wake.m;
+    if (sleepAbs <= wakeAbs || cycleEnd <= cycleStart) cycleEnd = addDays(cycleEnd, 1);
+    return { cycleStart: cycleStart, cycleEnd: cycleEnd };
+  }
+
+  /* Wake-to-bedtime length for that day, minus its school block (if any) -
+     the "available for productive chunks" window used for the ratio chart. */
+  function getAvailableSecForDay(day, settings){
+    var cycle = getCycleForDate(day, settings);
+    var totalSec = (cycle.cycleEnd - cycle.cycleStart) / 1000;
+    var school = getSchoolBlock(cycle.cycleStart, settings);
+    var schoolSec = 0;
+    if (school) {
+      var sStart = combine(cycle.cycleStart, parseHM(school.start));
+      var sEnd = combine(cycle.cycleStart, parseHM(school.end));
+      if (sEnd <= sStart) sEnd = addDays(sEnd, 1);
+      var clippedStart = sStart < cycle.cycleStart ? cycle.cycleStart : sStart;
+      var clippedEnd = sEnd > cycle.cycleEnd ? cycle.cycleEnd : sEnd;
+      if (clippedEnd > clippedStart) schoolSec = (clippedEnd - clippedStart) / 1000;
+    }
+    return Math.max(0, totalSec - schoolSec);
   }
 
   /* ---------------- storage (this device only) ---------------- */
@@ -1181,8 +1203,8 @@ input[type="time"], input[type="date"], select{
     document.body.classList.toggle("focusing", isActive);
     els.toggleBtn.classList.toggle("active", isActive);
     els.toggleBtn.setAttribute("aria-pressed", isActive ? "true" : "false");
-    els.toggleBtn.setAttribute("aria-label", isActive ? "End the current session" : "Start a productive session");
-    els.toggleLabel.textContent = isActive ? "Tap to end the session" : "Tap to start a session";
+    els.toggleBtn.setAttribute("aria-label", isActive ? "End the current chunk" : "Start a productive chunk");
+    els.toggleLabel.textContent = isActive ? "Tap to end the chunk" : "Tap to start a chunk";
     els.chunkInfo.hidden = !isActive;
   }
 
@@ -1207,7 +1229,7 @@ input[type="time"], input[type="date"], select{
       editBtn.className = "log-edit-btn";
       editBtn.type = "button";
       editBtn.setAttribute("data-id", s.id);
-      editBtn.setAttribute("aria-label", "Edit session");
+      editBtn.setAttribute("aria-label", "Edit chunk");
       editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.3 2.3l2.4 2.4L4.8 11.6l-3 .6.6-3z"/></svg>';
       li.appendChild(time); li.appendChild(j); li.appendChild(editBtn);
       els.logList.appendChild(li);
@@ -1247,7 +1269,7 @@ input[type="time"], input[type="date"], select{
     var todayKey = dateKey(cycle.cycleStart);
     var todays = sessions.filter(function(s){ return s.date === todayKey; });
     var mins = Math.round(todays.reduce(function(sum,s){ return sum + (s.durationSec||0); }, 0) / 60);
-    return "+" + mins + " min today · " + todays.length + " session" + (todays.length === 1 ? "" : "s");
+    return "+" + mins + " min today · " + todays.length + " chunk" + (todays.length === 1 ? "" : "s");
   }
 
   /* ---------------- stats panel ---------------- */
@@ -1268,10 +1290,14 @@ input[type="time"], input[type="date"], select{
     for (var i = days - 1; i >= 0; i--) {
       var d = addDays(cycle.cycleStart, -i);
       var key = dateKey(d);
+      var productiveSec = secByDay[key] || 0;
+      var availableSec = getAvailableSecForDay(d, settings);
       out.push({
         key: key,
         label: d.toLocaleDateString(undefined, { weekday: "narrow" }),
-        minutes: Math.round((secByDay[key] || 0) / 60),
+        shortDate: fmtShortDate(key),
+        minutes: Math.round(productiveSec / 60),
+        ratio: availableSec > 0 ? Math.min(1, productiveSec / availableSec) : 0,
         isToday: key === todayKey
       });
     }
@@ -1343,6 +1369,44 @@ input[type="time"], input[type="date"], select{
       col.appendChild(label);
       chart.appendChild(col);
     });
+
+    renderProductivityChart(stats.week);
+  }
+
+  function renderProductivityChart(days){
+    var svg = document.getElementById("statLineChart");
+    var W = 300, H = 84, padLeft = 28, padRight = 8, padTop = 8, padBottom = 20;
+    var plotW = W - padLeft - padRight;
+    var plotH = H - padTop - padBottom;
+    var n = days.length;
+    var stepX = n > 1 ? plotW / (n - 1) : 0;
+
+    function xFor(i){ return padLeft + stepX * i; }
+    function yFor(ratio){ return padTop + (1 - ratio) * plotH; }
+
+    var parts = [];
+
+    [0, 0.5, 1].forEach(function(r){
+      var y = yFor(r);
+      parts.push('<line x1="' + padLeft + '" y1="' + y + '" x2="' + (W - padRight) + '" y2="' + y + '" stroke="var(--line)" stroke-width="1"/>');
+      parts.push('<text x="' + (padLeft - 5) + '" y="' + (y + 3) + '" text-anchor="end" font-size="8" fill="var(--ink-faint)">' + Math.round(r * 100) + '%</text>');
+    });
+
+    var points = days.map(function(d, i){ return xFor(i) + "," + yFor(d.ratio); }).join(" ");
+    parts.push('<polyline points="' + points + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>');
+
+    days.forEach(function(d, i){
+      var x = xFor(i), y = yFor(d.ratio);
+      var r = d.isToday ? 3.4 : 2.2;
+      var fill = d.isToday ? "var(--accent-strong)" : "var(--accent)";
+      parts.push('<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="' + fill + '"><title>' + Math.round(d.ratio * 100) + '% on ' + d.shortDate + '</title></circle>');
+      var labelFill = d.isToday ? "var(--accent-strong)" : "var(--ink-faint)";
+      var labelWeight = d.isToday ? "600" : "400";
+      parts.push('<text x="' + x + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" font-weight="' + labelWeight + '" fill="' + labelFill + '">' + d.label + '</text>');
+    });
+
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    svg.innerHTML = parts.join("");
   }
 
   var statsOverlay = document.getElementById("statsOverlay");
@@ -1381,7 +1445,7 @@ input[type="time"], input[type="date"], select{
   function openJournal(){
     if (!active) return;
     var mins = Math.max(1, Math.round((Date.now() - new Date(active.startTime))/60000));
-    journalSub.textContent = "That session ran about " + mins + " min. What did you get done?";
+    journalSub.textContent = "That chunk ran about " + mins + " min. What did you get done?";
     journalText.value = "";
     journalError.classList.remove("show");
     journalOverlay.hidden = false;
@@ -1501,7 +1565,7 @@ input[type="time"], input[type="date"], select{
   document.getElementById("editDelete").addEventListener("click", function(){
     if (!editingId) return;
     var idToDelete = editingId;
-    showConfirm("This can't be undone.", { title: "Delete this session?", okLabel: "Delete" }).then(function(ok){
+    showConfirm("This can't be undone.", { title: "Delete this chunk?", okLabel: "Delete" }).then(function(ok){
       if (!ok) return;
       persistDeleteSession(idToDelete);
       closeEdit();
@@ -1583,7 +1647,7 @@ input[type="time"], input[type="date"], select{
     var data = decodeSyncCode(document.getElementById("syncPasteInput").value);
     if (!data) { errorEl.classList.add("show"); return; }
     errorEl.classList.remove("show");
-    showConfirm("This replaces this device's sessions and settings. This can't be undone.", { title: "Apply this sync code?", okLabel: "Replace" }).then(function(ok){
+    showConfirm("This replaces this device's chunks and settings. This can't be undone.", { title: "Apply this sync code?", okLabel: "Replace" }).then(function(ok){
       if (!ok) return;
       settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings || {});
       sessions = data.sessions || [];
