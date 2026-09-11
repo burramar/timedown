@@ -674,6 +674,23 @@ input[type="time"], input[type="date"], select{
       <ul class="override-list" id="overrideList"></ul>
     </section>
 
+    <section class="panel-section">
+      <h3>Sync across devices</h3>
+      <p class="hint">Copy this code and paste it into Settings on another device to bring your data there. Applying a pasted code replaces that device's sessions and settings, so copy from here first if you don't want to lose anything on the device you're pasting into.</p>
+      <div class="field-row">
+        <label for="syncCode">This device's code</label>
+        <textarea id="syncCode" class="mono" rows="3" readonly></textarea>
+      </div>
+      <button class="btn-ghost small" id="syncCopyBtn" type="button">Copy code</button>
+
+      <div class="field-row">
+        <label for="syncPasteInput">Paste a code from another device</label>
+        <textarea id="syncPasteInput" class="mono" rows="3" placeholder="Paste code here"></textarea>
+      </div>
+      <p class="field-error" id="syncError">That doesn't look like a Timedown sync code.</p>
+      <button class="btn-ghost small" id="syncApplyBtn" type="button">Apply pasted code</button>
+    </section>
+
     <button class="btn-primary full" id="settingsSave">Save settings</button>
   </div>
 </div>
@@ -1099,9 +1116,62 @@ input[type="time"], input[type="date"], select{
     document.getElementById("overrideType").value = "none";
     document.getElementById("overrideCustomTimes").hidden = true;
     renderOverrideList();
+    document.getElementById("syncCode").value = generateSyncCode();
+    document.getElementById("syncPasteInput").value = "";
+    document.getElementById("syncError").classList.remove("show");
     settingsOverlay.hidden = false;
   }
   function closeSettings(){ settingsOverlay.hidden = true; }
+
+  /* ---------------- manual sync code ---------------- */
+  function generateSyncCode(){
+    var payload = { settings: settings, sessions: sessions, active: active };
+    return "TD1:" + btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  }
+  function decodeSyncCode(code){
+    code = (code || "").trim();
+    if (code.indexOf("TD1:") !== 0) return null;
+    try {
+      var data = JSON.parse(decodeURIComponent(escape(atob(code.slice(4)))));
+      return (data && typeof data === "object") ? data : null;
+    } catch(e){ return null; }
+  }
+
+  document.getElementById("syncCopyBtn").addEventListener("click", function(){
+    var btn = this;
+    var codeEl = document.getElementById("syncCode");
+    function done(){
+      btn.textContent = "Copied";
+      setTimeout(function(){ btn.textContent = "Copy code"; }, 1500);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(codeEl.value).then(done).catch(function(){
+        codeEl.select();
+        try { document.execCommand("copy"); } catch(e){}
+        done();
+      });
+    } else {
+      codeEl.select();
+      try { document.execCommand("copy"); } catch(e){}
+      done();
+    }
+  });
+
+  document.getElementById("syncApplyBtn").addEventListener("click", function(){
+    var errorEl = document.getElementById("syncError");
+    var data = decodeSyncCode(document.getElementById("syncPasteInput").value);
+    if (!data) { errorEl.classList.add("show"); return; }
+    errorEl.classList.remove("show");
+    if (!confirm("Replace this device's sessions and settings with the pasted code? This can't be undone.")) return;
+    settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings || {});
+    sessions = data.sessions || [];
+    active = data.active || null;
+    animatedChunkIds = {};
+    sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
+    saveLocal();
+    closeSettings();
+    renderAll();
+  });
 
   document.getElementById("settingsBtn").addEventListener("click", openSettings);
   document.getElementById("settingsClose").addEventListener("click", closeSettings);
