@@ -1135,6 +1135,12 @@ input[type="time"], input[type="date"], select{
 
   document.getElementById("journalCancel").addEventListener("click", closeJournal);
   journalOverlay.addEventListener("click", function(e){ if (e.target === journalOverlay) closeJournal(); });
+  journalText.addEventListener("keydown", function(e){
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      document.getElementById("journalSave").click();
+    }
+  });
 
   document.getElementById("journalSave").addEventListener("click", function(){
     var text = journalText.value.trim();
