@@ -419,6 +419,8 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
 .btn-ghost:hover{background:var(--surface-2);color:var(--ink);}
 .btn-ghost.danger{color:var(--danger);border-color:var(--danger);}
 .btn-ghost.danger:hover{background:rgba(166,75,52,0.08);}
+.btn-primary.danger{background:var(--danger);}
+.btn-primary.danger:hover{filter:brightness(0.9);}
 .btn-primary.full{width:100%;text-align:center;}
 .btn-ghost.small{padding:7px 12px;font-size:0.8rem;}
 
@@ -620,6 +622,18 @@ input[type="time"], input[type="date"], select{
         <button class="btn-ghost" id="editCancel" type="button">Cancel</button>
         <button class="btn-primary" id="editSave" type="button">Save changes</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm dialog -->
+<div class="overlay center" id="confirmOverlay" hidden>
+  <div class="modal" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+    <h2 id="confirmTitle">Are you sure?</h2>
+    <p class="modal-sub" id="confirmMessage"></p>
+    <div class="modal-actions">
+      <button class="btn-ghost" id="confirmCancel" type="button">Cancel</button>
+      <button class="btn-primary danger" id="confirmOk" type="button">Confirm</button>
     </div>
   </div>
 </div>
@@ -1166,6 +1180,30 @@ input[type="time"], input[type="date"], select{
     showToast(todayStatText());
   });
 
+  /* ---------------- confirm dialog (replaces window.confirm) ---------------- */
+  var confirmOverlay = document.getElementById("confirmOverlay");
+  var confirmTitleEl = document.getElementById("confirmTitle");
+  var confirmMessageEl = document.getElementById("confirmMessage");
+  var confirmOkBtn = document.getElementById("confirmOk");
+  var confirmCancelBtn = document.getElementById("confirmCancel");
+  var confirmResolve = null;
+
+  function showConfirm(message, opts){
+    opts = opts || {};
+    confirmTitleEl.textContent = opts.title || "Are you sure?";
+    confirmMessageEl.textContent = message;
+    confirmOkBtn.textContent = opts.okLabel || "Confirm";
+    confirmOverlay.hidden = false;
+    return new Promise(function(resolve){ confirmResolve = resolve; });
+  }
+  function closeConfirm(result){
+    confirmOverlay.hidden = true;
+    if (confirmResolve) { var r = confirmResolve; confirmResolve = null; r(result); }
+  }
+  confirmOkBtn.addEventListener("click", function(){ closeConfirm(true); });
+  confirmCancelBtn.addEventListener("click", function(){ closeConfirm(false); });
+  confirmOverlay.addEventListener("click", function(e){ if (e.target === confirmOverlay) closeConfirm(false); });
+
   /* ---------------- edit session modal ---------------- */
   var editOverlay = document.getElementById("editOverlay");
   var editStart = document.getElementById("editStart");
@@ -1221,17 +1259,20 @@ input[type="time"], input[type="date"], select{
 
   document.getElementById("editDelete").addEventListener("click", function(){
     if (!editingId) return;
-    if (!confirm("Delete this session? This can't be undone.")) return;
-    persistDeleteSession(editingId);
-    closeEdit();
+    var idToDelete = editingId;
+    showConfirm("This can't be undone.", { title: "Delete this session?", okLabel: "Delete" }).then(function(ok){
+      if (!ok) return;
+      persistDeleteSession(idToDelete);
+      closeEdit();
+    });
   });
 
   document.addEventListener("keydown", function(e){
-    if (e.key === "Escape") {
-      if (!journalOverlay.hidden) closeJournal();
-      if (!settingsOverlay.hidden) closeSettings();
-      if (!editOverlay.hidden) closeEdit();
-    }
+    if (e.key !== "Escape") return;
+    if (!confirmOverlay.hidden) { closeConfirm(false); return; }
+    if (!journalOverlay.hidden) { closeJournal(); return; }
+    if (!editOverlay.hidden) { closeEdit(); return; }
+    if (!settingsOverlay.hidden) { closeSettings(); return; }
   });
 
   /* ---------------- settings drawer ---------------- */
@@ -1300,15 +1341,17 @@ input[type="time"], input[type="date"], select{
     var data = decodeSyncCode(document.getElementById("syncPasteInput").value);
     if (!data) { errorEl.classList.add("show"); return; }
     errorEl.classList.remove("show");
-    if (!confirm("Replace this device's sessions and settings with the pasted code? This can't be undone.")) return;
-    settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings || {});
-    sessions = data.sessions || [];
-    active = data.active || null;
-    animatedChunkIds = {};
-    sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
-    saveLocal();
-    closeSettings();
-    renderAll();
+    showConfirm("This replaces this device's sessions and settings. This can't be undone.", { title: "Apply this sync code?", okLabel: "Replace" }).then(function(ok){
+      if (!ok) return;
+      settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings || {});
+      sessions = data.sessions || [];
+      active = data.active || null;
+      animatedChunkIds = {};
+      sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
+      saveLocal();
+      closeSettings();
+      renderAll();
+    });
   });
 
   document.getElementById("settingsBtn").addEventListener("click", openSettings);
