@@ -855,20 +855,15 @@ input[type="time"], input[type="date"], select{
     </section>
 
     <section class="panel-section">
-      <h3>Sync across devices</h3>
-      <p class="hint">Copy this code and paste it into Settings on another device to bring your data there. Chunks from both devices are combined by applying a code, so nothing gets lost - only this device's settings, and an in-progress chunk if it doesn't already have one, are replaced by the pasted code.</p>
-      <div class="field-row">
-        <label for="syncCode">This device's code</label>
-        <textarea id="syncCode" class="mono" rows="3" readonly></textarea>
+      <h3>Account</h3>
+      <div id="accountSignedOut">
+        <p class="hint">Sign in with Google to sync your chunks and settings across devices automatically - no codes to copy.</p>
+        <button class="btn-primary" id="signInBtn" type="button">Sign in with Google</button>
       </div>
-      <button class="btn-ghost small" id="syncCopyBtn" type="button">Copy code</button>
-
-      <div class="field-row">
-        <label for="syncPasteInput">Paste a code from another device</label>
-        <textarea id="syncPasteInput" class="mono" rows="3" placeholder="Paste code here"></textarea>
+      <div id="accountSignedIn" hidden>
+        <p class="hint" id="accountStatus"></p>
+        <button class="btn-ghost small" id="signOutBtn" type="button">Sign out</button>
       </div>
-      <p class="field-error" id="syncError">That doesn't look like a Timedown sync code.</p>
-      <button class="btn-ghost small" id="syncApplyBtn" type="button">Apply pasted code</button>
     </section>
 
     <button class="btn-primary full" id="settingsSave">Save settings</button>
@@ -938,6 +933,9 @@ input[type="time"], input[type="date"], select{
   </div>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
 (function(){
   "use strict";
@@ -1040,6 +1038,115 @@ input[type="time"], input[type="date"], select{
      grow-in animation - only ones logged during this visit do. */
   var animatedChunkIds = {};
   sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
+
+  /* ---------------- Firebase (optional cloud sync) ----------------
+     The app works fully on localStorage alone; signing in additionally
+     mirrors everything to Firestore under this user's own uid, gated by
+     security rules that only that signed-in uid can read or write. The
+     config below is not a secret - Firebase's client config is meant to
+     be public; the rules are the actual security boundary. */
+  var firebaseConfig = {
+    apiKey: "AIzaSyDL6_WaNfxbAUxMEbBpA0AJLCwYV2-GATQ",
+    authDomain: "timedown-bc6ee.firebaseapp.com",
+    projectId: "timedown-bc6ee",
+    storageBucket: "timedown-bc6ee.firebasestorage.app",
+    messagingSenderId: "1028922551329",
+    appId: "1:1028922551329:web:0db73ad6055b5e3dfd8760"
+  };
+  var auth = null, db = null, fbUser = null;
+  var unsubSessions = null, unsubMeta = null;
+  try {
+    firebase.initializeApp(firebaseConfig);
+    auth = firebase.auth();
+    db = firebase.firestore();
+    db.enablePersistence({ synchronizeTabs: true }).catch(function(){});
+  } catch (e) { /* SDK blocked or unavailable - app still works locally */ }
+
+  function userSessionsCol(){ return db.collection("users").doc(fbUser.uid).collection("sessions"); }
+  function userMetaDoc(){ return db.collection("users").doc(fbUser.uid).collection("meta").doc("state"); }
+
+  /* Union by id - a chunk on either side survives. Used for the one-time
+     local <-> cloud merge on first sign-in. */
+  function mergeSessionsById(a, b){
+    var byId = {};
+    (a || []).forEach(function(s){ byId[s.id] = s; });
+    (b || []).forEach(function(s){ byId[s.id] = s; });
+    return Object.keys(byId).map(function(id){ return byId[id]; });
+  }
+
+  function detachCloud(){
+    if (unsubSessions) { unsubSessions(); unsubSessions = null; }
+    if (unsubMeta) { unsubMeta(); unsubMeta = null; }
+  }
+  function attachCloud(){
+    unsubSessions = userSessionsCol().onSnapshot(function(snap){
+      sessions = snap.docs.map(function(d){ return d.data(); });
+      saveLocal();
+      renderAll();
+    }, function(){});
+    unsubMeta = userMetaDoc().onSnapshot(function(doc){
+      if (!doc.exists) return;
+      var data = doc.data();
+      if (data.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings);
+      if ("active" in data) active = data.active || null;
+      saveLocal();
+      renderAll();
+    }, function(){});
+  }
+  /* One-time on sign-in: combine whatever's local with whatever's already
+     in the cloud so neither side loses chunks, push the merged result
+     back up, then attach live listeners for everything after. */
+  function migrateAndAttach(){
+    Promise.all([ userSessionsCol().get(), userMetaDoc().get() ]).then(function(results){
+      var cloudSessions = results[0].docs.map(function(d){ return d.data(); });
+      var cloudMeta = results[1].exists ? results[1].data() : null;
+
+      sessions = mergeSessionsById(sessions, cloudSessions);
+      if (cloudMeta && cloudMeta.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), cloudMeta.settings);
+      if (cloudMeta && "active" in cloudMeta) active = cloudMeta.active || active || null;
+
+      animatedChunkIds = {};
+      sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
+      saveLocal();
+      renderAll();
+
+      var batch = db.batch();
+      sessions.forEach(function(s){ batch.set(userSessionsCol().doc(s.id), s); });
+      batch.set(userMetaDoc(), { settings: settings, active: active }, { merge: true });
+      return batch.commit();
+    }).catch(function(){}).then(attachCloud);
+  }
+  function renderAccountStatus(){
+    var signedOutEl = document.getElementById("accountSignedOut");
+    var signedInEl = document.getElementById("accountSignedIn");
+    if (fbUser) {
+      signedOutEl.hidden = true;
+      signedInEl.hidden = false;
+      document.getElementById("accountStatus").textContent =
+        "Signed in as " + (fbUser.email || fbUser.displayName || "your account") + " - syncing automatically.";
+    } else {
+      signedOutEl.hidden = false;
+      signedInEl.hidden = true;
+    }
+  }
+  function signIn(){
+    if (!auth) { showToast("Sign-in isn't available right now"); return; }
+    auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(function(){
+      showToast("Sign-in failed - try again");
+    });
+  }
+  function signOutUser(){ if (auth) auth.signOut(); }
+
+  if (auth) {
+    auth.onAuthStateChanged(function(user){
+      detachCloud();
+      fbUser = user;
+      renderAccountStatus();
+      if (user) migrateAndAttach();
+    });
+  }
+  document.getElementById("signInBtn").addEventListener("click", signIn);
+  document.getElementById("signOutBtn").addEventListener("click", signOutUser);
 
   /* ---------------- reward cues: haptics + sound hook ---------------- */
   function buzz(pattern){
@@ -1146,26 +1253,34 @@ input[type="time"], input[type="date"], select{
   function persistSettings(next){
     settings = next;
     saveLocal();
+    if (fbUser) userMetaDoc().set({ settings: settings }, { merge: true }).catch(function(){});
     renderAll();
   }
   function persistActive(next){
     active = next;
     saveLocal();
+    if (fbUser) userMetaDoc().set({ active: active }, { merge: true }).catch(function(){});
   }
   function persistNewSession(session){
     session = Object.assign({ id: "s-" + Date.now() }, session);
     sessions = [session].concat(sessions);
     saveLocal();
+    if (fbUser) userSessionsCol().doc(session.id).set(session).catch(function(){});
     renderLog();
   }
   function persistUpdateSession(id, patch){
     sessions = sessions.map(function(s){ return s.id === id ? Object.assign({}, s, patch) : s; });
     saveLocal();
+    if (fbUser) {
+      var updated = sessions.find(function(s){ return s.id === id; });
+      if (updated) userSessionsCol().doc(id).set(updated).catch(function(){});
+    }
     renderAll();
   }
   function persistDeleteSession(id){
     sessions = sessions.filter(function(s){ return s.id !== id; });
     saveLocal();
+    if (fbUser) userSessionsCol().doc(id).delete().catch(function(){});
     renderAll();
   }
 
@@ -1672,74 +1787,10 @@ input[type="time"], input[type="date"], select{
     renderOverrideList();
     refreshStartSoundStatus();
     refreshCompleteSoundStatus();
-    document.getElementById("syncCode").value = generateSyncCode();
-    document.getElementById("syncPasteInput").value = "";
-    document.getElementById("syncError").classList.remove("show");
+    renderAccountStatus();
     settingsOverlay.hidden = false;
   }
   function closeSettings(){ settingsOverlay.hidden = true; }
-
-  /* ---------------- manual sync code ---------------- */
-  function generateSyncCode(){
-    var payload = { settings: settings, sessions: sessions, active: active };
-    return "TD1:" + btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
-  }
-  function decodeSyncCode(code){
-    code = (code || "").trim();
-    if (code.indexOf("TD1:") !== 0) return null;
-    try {
-      var data = JSON.parse(decodeURIComponent(escape(atob(code.slice(4)))));
-      return (data && typeof data === "object") ? data : null;
-    } catch(e){ return null; }
-  }
-  /* Union by id - a chunk from either side survives. On an id that exists
-     in both (the same chunk edited on two devices since the last sync),
-     the pasted copy wins, since applying a code is a deliberate action. */
-  function mergeSessionsById(local, pasted){
-    var byId = {};
-    (local || []).forEach(function(s){ byId[s.id] = s; });
-    (pasted || []).forEach(function(s){ byId[s.id] = s; });
-    return Object.keys(byId).map(function(id){ return byId[id]; });
-  }
-
-  document.getElementById("syncCopyBtn").addEventListener("click", function(){
-    var btn = this;
-    var codeEl = document.getElementById("syncCode");
-    function done(){
-      btn.textContent = "Copied";
-      setTimeout(function(){ btn.textContent = "Copy code"; }, 1500);
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(codeEl.value).then(done).catch(function(){
-        codeEl.select();
-        try { document.execCommand("copy"); } catch(e){}
-        done();
-      });
-    } else {
-      codeEl.select();
-      try { document.execCommand("copy"); } catch(e){}
-      done();
-    }
-  });
-
-  document.getElementById("syncApplyBtn").addEventListener("click", function(){
-    var errorEl = document.getElementById("syncError");
-    var data = decodeSyncCode(document.getElementById("syncPasteInput").value);
-    if (!data) { errorEl.classList.add("show"); return; }
-    errorEl.classList.remove("show");
-
-    var before = sessions.length;
-    settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings || {});
-    sessions = mergeSessionsById(sessions, data.sessions || []);
-    active = active || data.active || null;
-    animatedChunkIds = {};
-    sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
-    saveLocal();
-    closeSettings();
-    renderAll();
-    var added = sessions.length - before;
-    showToast(added > 0 ? ("Synced - " + added + " new chunk" + (added === 1 ? "" : "s")) : "Synced - already up to date");
-  });
 
   document.getElementById("settingsBtn").addEventListener("click", openSettings);
   document.getElementById("settingsClose").addEventListener("click", closeSettings);
