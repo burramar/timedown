@@ -74,21 +74,22 @@ button{font-family:inherit;}
   display:flex;
   gap:8px;
 }
-/* ---------- Theme toggle "paint spill" transition ---------- */
-.theme-spill, .theme-spill-glow{
-  position:fixed;
-  inset:0;
-  z-index:60;
-  pointer-events:none;
-  opacity:0;
-  clip-path:circle(0px at 0px 0px);
-  will-change:clip-path;
-  transform:translateZ(0);
+/* ---------- Theme toggle "paint spill" transition ----------
+   Uses the native View Transitions API so the circle wipe reveals the
+   real, already-re-themed page underneath rather than a fake solid-color
+   overlay - the actual UI recolors as the circle passes over it. The two
+   pseudo-elements are the browser's own before/after snapshots of <html>;
+   disabling their default cross-fade and stacking new-on-top-of-old is
+   what turns the built-in fade into an iris wipe instead. */
+::view-transition-group(root){
+  animation-duration:0s;
 }
-.theme-spill-glow{
-  filter:blur(12px);
-  opacity:.55;
+::view-transition-old(root), ::view-transition-new(root){
+  animation:none;
+  mix-blend-mode:normal;
 }
+::view-transition-old(root){ z-index:1; }
+::view-transition-new(root){ z-index:2; }
 .theme-splatter{
   position:fixed;
   border-radius:50%;
@@ -96,7 +97,7 @@ button{font-family:inherit;}
   z-index:61;
 }
 @media (prefers-reduced-motion: reduce){
-  .theme-spill, .theme-spill-glow, .theme-splatter{display:none;}
+  .theme-splatter{display:none;}
 }
 .icon-btn{
   position:relative;
@@ -1075,9 +1076,6 @@ input[type="time"], input[type="date"], select{
     </svg>
   </button>
 </header>
-
-<div class="theme-spill-glow" id="themeSpillGlow" aria-hidden="true"></div>
-<div class="theme-spill" id="themeSpill" aria-hidden="true"></div>
 
 <div class="corner-status">
   <div class="app-logo" aria-hidden="true">
@@ -3024,61 +3022,51 @@ input[type="time"], input[type="date"], select{
     }
   }
 
-  var themeMainAnim = null;
-  var themeGlowAnim = null;
-
-  function killThemeAnims(){
-    if (themeMainAnim) { try { themeMainAnim.cancel(); } catch(e){} themeMainAnim = null; }
-    if (themeGlowAnim) { try { themeGlowAnim.cancel(); } catch(e){} themeGlowAnim = null; }
-  }
+  var activeThemeTransition = null;
 
   function toggleTheme(originX, originY){
-    // Cancel any in-flight spill first so a fast second click can never get stuck
-    // behind a "finished" (but still fill:forwards-held) animation from the last click.
-    killThemeAnims();
-
     var next = currentTheme() === "dark" ? "light" : "dark";
     var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduceMotion) { setThemeAttr(next); renderAll(); return; }
 
-    var paintColor = next === "dark" ? "#17160F" : "#FAFAF6";
-    var glowColor = next === "dark" ? "#6FA0C4" : "#2E6690";
-    var spill = document.getElementById("themeSpill");
-    var glow = document.getElementById("themeSpillGlow");
+    if (reduceMotion || typeof document.startViewTransition !== "function") {
+      setThemeAttr(next);
+      renderAll();
+      return;
+    }
+
+    // A fast second click while one wipe is still running would otherwise queue
+    // up behind it - skip straight to the end state first so it can never stall.
+    if (activeThemeTransition) { try { activeThemeTransition.skipTransition(); } catch(e){} }
+
     var maxR = Math.hypot(
       Math.max(originX, window.innerWidth - originX),
       Math.max(originY, window.innerHeight - originY)
     ) * 1.05;
 
-    spill.style.background = paintColor;
-    glow.style.background = glowColor;
-    spill.style.opacity = "1";
-    glow.style.opacity = ".55";
-    spawnPaintSplatter(originX, originY, paintColor);
-
-    var startClip = "circle(0px at " + originX + "px " + originY + "px)";
-    var endClip = "circle(" + maxR + "px at " + originX + "px " + originY + "px)";
-    var glowEndClip = "circle(" + (maxR + 36) + "px at " + originX + "px " + originY + "px)";
-
-    themeMainAnim = spill.animate(
-      [{ clipPath: startClip }, { clipPath: endClip }],
-      { duration: 750, easing: "cubic-bezier(.35,0,.15,1)", fill: "forwards" }
-    );
-    themeGlowAnim = glow.animate(
-      [{ clipPath: startClip }, { clipPath: glowEndClip }],
-      { duration: 750, easing: "cubic-bezier(.35,0,.15,1)", fill: "forwards" }
-    );
-
-    // Apply the theme as soon as the reveal has visually covered the screen, then
-    // release the WAAPI hold via cancel() (not just resetting inline styles, which
-    // fill:"forwards" would otherwise keep overriding) before hiding the overlay.
-    themeMainAnim.onfinish = function(){
+    var transition = document.startViewTransition(function(){
       setThemeAttr(next);
       renderAll();
-      killThemeAnims();
-      spill.style.opacity = "0";
-      glow.style.opacity = "0";
-    };
+    });
+    activeThemeTransition = transition;
+
+    transition.ready.then(function(){
+      document.documentElement.animate(
+        { clipPath: [
+            "circle(0px at " + originX + "px " + originY + "px)",
+            "circle(" + maxR + "px at " + originX + "px " + originY + "px)"
+          ] },
+        { duration: 750, easing: "cubic-bezier(.35,0,.15,1)", pseudoElement: "::view-transition-new(root)" }
+      );
+    }).catch(function(){});
+
+    // The real page (including any DOM we touch here) is hidden behind the
+    // transition's own before/after snapshots while it plays, so the splatter
+    // flourish is queued for right as the wipe settles rather than fired at
+    // click time, where it'd just get baked motionless into those snapshots.
+    transition.finished.then(function(){
+      if (activeThemeTransition === transition) activeThemeTransition = null;
+      spawnPaintSplatter(originX, originY, next === "dark" ? "#17160F" : "#FAFAF6");
+    });
   }
 
   themeToggleBtn.addEventListener("click", function(){
