@@ -376,6 +376,17 @@ button{font-family:inherit;}
   transform-origin:left center;
   animation:segGrow .5s cubic-bezier(.2,.8,.2,1) both;
 }
+/* Bracket outline, not a fill - marks where the double-ELO window
+   falls without covering whatever's drawn underneath it (school
+   hatching, logged chunks). */
+.day-seg.double-window{
+  top:-3px;
+  bottom:-3px;
+  background:transparent;
+  border:1.5px dashed var(--accent);
+  border-radius:5px;
+  pointer-events:none;
+}
 @media (prefers-reduced-motion: reduce){
   .day-seg.chunk.live{animation:none;}
   .day-seg.chunk.new{animation:none;}
@@ -1857,6 +1868,22 @@ input[type="time"], input[type="date"], select{
       seg2.style.left = l2 + "%";
       seg2.style.width = Math.max(0.6, r2 - l2) + "%";
       track.appendChild(seg2);
+    }
+
+    if (settings.doubleWindow && settings.doubleWindow.enabled) {
+      var dwStart = combine(cycle.cycleStart, parseHM(settings.doubleWindow.start));
+      var dwEnd = combine(cycle.cycleStart, parseHM(settings.doubleWindow.end));
+      if (dwEnd <= dwStart) dwEnd = addDays(dwEnd, 1);
+      var dwClipStart = dwStart < cycle.cycleStart ? cycle.cycleStart : dwStart;
+      var dwClipEnd = dwEnd > cycle.cycleEnd ? cycle.cycleEnd : dwEnd;
+      if (dwClipEnd > dwClipStart) {
+        var dwSeg = document.createElement("div");
+        dwSeg.className = "day-seg double-window";
+        var ld = pct(dwClipStart), rd = pct(dwClipEnd);
+        dwSeg.style.left = ld + "%";
+        dwSeg.style.width = Math.max(0.5, rd - ld) + "%";
+        track.appendChild(dwSeg);
+      }
     }
 
     if (now >= cycle.cycleStart && now <= cycle.cycleEnd) {
