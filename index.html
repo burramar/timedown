@@ -1478,8 +1478,16 @@ input[type="time"], input[type="date"], select{
     var rankEnd = thresholds[rankIndex + 1];
     var span = rankEnd - rankStart;
     var isTopRank = rankIndex === RANKS.length - 1;
-    var progressInRank = span > 0 ? Math.min(1, (elo - rankStart) / span) : 1;
-    var divIndex = Math.min(DIVISIONS.length - 1, Math.floor(progressInRank * DIVISIONS.length));
+    /* Same sequential >= technique as rankIndex above, rather than
+       flooring progress*3 - flooring can disagree with the boundary
+       value itself at the edge (float error), which let elo already
+       be past a division's end while still labeled with that division
+       and showing "0 ELO to next" - self-contradictory, and it meant
+       checkRankUp never saw that division as its own tier at all. */
+    var divIndex = 0;
+    for (var d = 0; d < DIVISIONS.length; d++) {
+      if (elo >= rankStart + (span * d / DIVISIONS.length)) divIndex = d; else break;
+    }
     var divStart = rankStart + (span * divIndex / DIVISIONS.length);
     var divEnd = rankStart + (span * (divIndex + 1) / DIVISIONS.length);
     var isMax = isTopRank && divIndex === DIVISIONS.length - 1 && elo >= divEnd;
