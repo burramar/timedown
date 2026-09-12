@@ -214,13 +214,32 @@ button{font-family:inherit;}
   display:flex;align-items:center;justify-content:center;
   cursor:pointer;
   box-shadow:var(--shadow);
-  transition:color .15s ease, border-color .15s ease, background .15s ease;
+  transition:color .15s ease, border-color .15s ease, background .15s ease, transform .15s ease;
   z-index:2;
+}
+.double-window-toggle:hover{
+  color:var(--accent-strong);
+  border-color:var(--accent);
+  background:var(--accent-soft);
+  transform:scale(1.1);
+}
+.double-window-toggle:focus-visible{
+  outline:2px solid var(--accent);
+  outline-offset:2px;
 }
 .double-window-toggle.enabled{
   color:var(--accent-strong);
   border-color:var(--accent);
   background:var(--accent-soft);
+}
+.double-window-toggle.enabled:hover{
+  background:var(--accent);
+  color:var(--accent-ink);
+  transform:scale(1.1);
+}
+@media (prefers-reduced-motion: reduce){
+  .double-window-toggle{transition:color .15s ease, border-color .15s ease, background .15s ease;}
+  .double-window-toggle:hover, .double-window-toggle.enabled:hover{transform:none;}
 }
 .double-window-panel{
   margin-top:-20px;
