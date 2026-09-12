@@ -1131,9 +1131,7 @@ input[type="time"], input[type="date"], select{
   }
   function signIn(){
     if (!auth) { showToast("Sign-in isn't available right now"); return; }
-    auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()).catch(function(){
-      showToast("Sign-in failed - try again");
-    });
+    auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
   }
   function signOutUser(){ if (auth) auth.signOut(); }
 
@@ -1143,6 +1141,9 @@ input[type="time"], input[type="date"], select{
       fbUser = user;
       renderAccountStatus();
       if (user) migrateAndAttach();
+    });
+    auth.getRedirectResult().catch(function(err){
+      showToast("Sign-in failed: " + (err && err.code ? err.code : "unknown error"));
     });
   }
   document.getElementById("signInBtn").addEventListener("click", signIn);
