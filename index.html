@@ -130,16 +130,26 @@ button{font-family:inherit;}
   gap:8px;
 }
 .app-logo{
-  aspect-ratio:1/1;
+  /* Fixed width rather than aspect-ratio - aspect-ratio combined with
+     flex align-items:stretch (for matching the elo-card's height) was
+     leaving the width unconstrained and letting it fill the row. Reuses
+     the rank-up screen's own --rank-glow for the fill, but feeds
+     --rank-light the "dark" hex (this sits on a light card, not the
+     rank-up screen's dark backdrop, so it needs the on-light variant
+     for contrast) - lets the exact same .rankup-gem-outline/-facet
+     rules apply unchanged. */
+  --rank-glow:58,130,190;
+  --rank-light:#0B2233;
+  width:52px;
   flex-shrink:0;
   background:var(--surface);
   border:1px solid var(--line);
   border-radius:10px;
   box-shadow:var(--shadow);
   display:flex;align-items:center;justify-content:center;
-  color:var(--accent);
+  padding:9px;
 }
-.app-logo svg{width:58%;height:58%;}
+.app-logo svg{width:100%;height:100%;}
 .elo-card{
   /* Defaults (Sapphire-ish blue); set inline per rank by JS, same
      values as the rank-up screen's --rank-glow/--rank-dark. */
@@ -987,9 +997,7 @@ input[type="time"], input[type="date"], select{
 
 <div class="corner-status">
   <div class="app-logo" aria-hidden="true">
-    <svg viewBox="0 0 32 32">
-      <path d="M10 7h12M10 25h12M11 7c0 5 4 6 5 9-1 3-5 4-5 9M21 7c0 5-4 6-5 9 1 3 5 4 5 9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
+    <svg id="rankBadgeSvg" viewBox="0 0 100 100"></svg>
   </div>
   <div class="elo-card">
     <div class="elo-top">
@@ -1482,7 +1490,11 @@ input[type="time"], input[type="date"], select{
   var DIVISIONS = ["I","II","III"];
 
   function rankSpan(rankIndex){
-    return Math.round(50 * Math.pow(rankIndex + 1, 2.1));
+    /* 229, not 50 - calibrated so Copper's first division (the easiest
+       division that exists) costs 30 ELO instead of ~7. Everything
+       else scales off this same base, so the whole curve got about
+       4.6x harder throughout, not just the very start. */
+    return Math.round(229 * Math.pow(rankIndex + 1, 2.1));
   }
   function rankThresholds(){
     var thresholds = [0];
@@ -2006,6 +2018,11 @@ input[type="time"], input[type="date"], select{
     var eloCard = document.querySelector(".elo-card");
     eloCard.style.setProperty("--rank-glow", c.glow);
     eloCard.style.setProperty("--rank-dark", c.dark);
+
+    var logoEl = document.querySelector(".app-logo");
+    logoEl.style.setProperty("--rank-glow", c.glow);
+    logoEl.style.setProperty("--rank-light", c.dark);
+    document.getElementById("rankBadgeSvg").innerHTML = buildBadgeSvg(info.rankIndex, info.divIndex);
 
     els.eloRankName.textContent = info.rankName;
     els.eloDivName.textContent = info.isMax ? "MAX" : info.divName;
