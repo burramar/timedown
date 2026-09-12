@@ -1712,6 +1712,13 @@ input[type="time"], input[type="date"], select{
     appId: "1:1028922551329:web:0db73ad6055b5e3dfd8760"
   };
   var auth = null, db = null, storage = null, fbUser = null;
+  /* True only once migrateAndAttach's local<->cloud merge has landed.
+     Guards every push to Firestore - without it, the per-second tick loop
+     (whose own push throttle starts at 0, so it's eligible immediately)
+     can push a freshly-booted device's stale local ELO before the merge
+     has a chance to reconcile it against the real cloud value, clobbering
+     real progress with whatever this device happened to have on disk. */
+  var cloudReady = false;
   var unsubSessions = null, unsubMeta = null;
   try {
     firebase.initializeApp(firebaseConfig);
@@ -1779,7 +1786,10 @@ input[type="time"], input[type="date"], select{
       sessions.forEach(function(s){ batch.set(userSessionsCol().doc(s.id), s); });
       batch.set(userMetaDoc(), { settings: settings, active: active, eloPoints: eloPoints }, { merge: true });
       return batch.commit();
-    }).catch(function(){}).then(attachCloud);
+    }).catch(function(){}).then(function(){
+      cloudReady = true;
+      attachCloud();
+    });
   }
   function renderAccountStatus(){
     var signedOutEl = document.getElementById("accountSignedOut");
@@ -1817,6 +1827,7 @@ input[type="time"], input[type="date"], select{
   if (auth) {
     auth.onAuthStateChanged(function(user){
       detachCloud();
+      cloudReady = false;
       fbUser = user;
       renderAccountStatus();
       if (user) { migrateAndAttach(); syncAllSoundsWithCloud(); }
@@ -2203,7 +2214,7 @@ input[type="time"], input[type="date"], select{
      failures instead of swallowing them, so a sync problem is at
      least visible in the console rather than silently invisible. */
   function pushEloNow(){
-    if (!fbUser) return;
+    if (!fbUser || !cloudReady) return;
     lastEloPushAt = Date.now();
     userMetaDoc().set({ eloPoints: eloPoints }, { merge: true }).catch(function(err){
       console.error("ELO sync failed:", err);
