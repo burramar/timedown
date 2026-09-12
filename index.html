@@ -87,6 +87,7 @@ button{font-family:inherit;}
 ::view-transition-old(root), ::view-transition-new(root){
   animation:none;
   mix-blend-mode:normal;
+  will-change:clip-path;
 }
 ::view-transition-old(root){ z-index:1; }
 ::view-transition-new(root){ z-index:2; }
@@ -2175,6 +2176,11 @@ input[type="time"], input[type="date"], select{
   }
 
   function tick(){
+    // Skip this beat entirely while the theme wipe is playing - its per-frame
+    // clip-path mask work is competing for the same main thread, and a
+    // full day-bar/ELO/countdown re-render landing mid-wipe is exactly what
+    // turns a smooth animation into a stall-then-snap.
+    if (activeThemeTransition) return;
     var now = new Date();
     var inWindow = isInDoubleWindow(now, settings);
     document.body.classList.toggle("double-bonus", !!active && inWindow);
@@ -3055,7 +3061,7 @@ input[type="time"], input[type="date"], select{
             "circle(0px at " + originX + "px " + originY + "px)",
             "circle(" + maxR + "px at " + originX + "px " + originY + "px)"
           ] },
-        { duration: 750, easing: "cubic-bezier(.35,0,.15,1)", pseudoElement: "::view-transition-new(root)" }
+        { duration: 750, easing: "cubic-bezier(.35,0,.15,1)", fill: "forwards", pseudoElement: "::view-transition-new(root)" }
       );
     }).catch(function(){});
 
