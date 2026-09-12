@@ -1036,6 +1036,12 @@ input[type="time"], input[type="date"], select{
       </div>
     </section>
 
+    <section class="panel-section">
+      <h3>Preview</h3>
+      <p class="hint">Shows the rank-up screen using your current rank - doesn't change your real ELO.</p>
+      <button class="btn-ghost small" id="previewRankUpBtn" type="button">Preview rank-up screen</button>
+    </section>
+
     <button class="btn-primary full" id="settingsSave">Save settings</button>
   </div>
 </div>
@@ -1708,6 +1714,9 @@ input[type="time"], input[type="date"], select{
   document.getElementById("rankUpClose").addEventListener("click", closeRankUp);
   document.getElementById("rankUpOverlay").addEventListener("click", function(e){
     if (e.target === document.getElementById("rankUpOverlay")) closeRankUp();
+  });
+  document.getElementById("previewRankUpBtn").addEventListener("click", function(){
+    showRankUp(getRankInfo(eloPoints));
   });
 
   function renderLog(){
