@@ -1754,12 +1754,20 @@ input[type="time"], input[type="date"], select{
      the max). Skipping fromCache events means only server-confirmed data
      ever overwrites live state, at the cost of not live-updating while
      offline - a fair trade against silently regressing real progress. */
+  /* A sync event landing mid-wipe would force the same kind of heavy
+     re-render tick() is already barred from doing during the transition -
+     defer it instead of dropping it, and flush once the wipe settles. */
+  var themeTransitionPendingRender = false;
+  function renderAllUnlessMidWipe(){
+    if (activeThemeTransition) { themeTransitionPendingRender = true; return; }
+    renderAll();
+  }
   function attachCloud(){
     unsubSessions = userSessionsCol().onSnapshot(function(snap){
       if (snap.metadata.fromCache) return;
       sessions = snap.docs.map(function(d){ return d.data(); });
       saveLocal();
-      renderAll();
+      renderAllUnlessMidWipe();
     }, function(){});
     unsubMeta = userMetaDoc().onSnapshot(function(doc){
       if (doc.metadata.fromCache) return;
@@ -1769,7 +1777,7 @@ input[type="time"], input[type="date"], select{
       if ("active" in data) active = data.active || null;
       if (typeof data.eloPoints === "number") eloPoints = data.eloPoints;
       saveLocal();
-      renderAll();
+      renderAllUnlessMidWipe();
     }, function(){});
   }
   /* One-time on sign-in: combine whatever's local with whatever's already
@@ -3073,7 +3081,7 @@ input[type="time"], input[type="date"], select{
             "circle(0px at " + originX + "px " + originY + "px)",
             "circle(" + maxR + "px at " + originX + "px " + originY + "px)"
           ] },
-        { duration: 750, easing: "cubic-bezier(.35,0,.15,1)", fill: "forwards", pseudoElement: "::view-transition-new(root)" }
+        { duration: 550, easing: "cubic-bezier(.35,0,.15,1)", fill: "forwards", pseudoElement: "::view-transition-new(root)" }
       );
     }).catch(function(){});
 
@@ -3083,6 +3091,7 @@ input[type="time"], input[type="date"], select{
     // click time, where it'd just get baked motionless into those snapshots.
     transition.finished.then(function(){
       if (activeThemeTransition === transition) activeThemeTransition = null;
+      if (themeTransitionPendingRender) { themeTransitionPendingRender = false; renderAll(); }
       spawnPaintSplatter(originX, originY, next === "dark" ? "#17160F" : "#FAFAF6");
     });
   }
