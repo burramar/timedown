@@ -1134,11 +1134,17 @@ input[type="time"], input[type="date"], select{
             </div>
           </div>
           <button class="btn-primary full" id="dwSetBtn" type="button">Lock in this window</button>
+          <p class="hint" id="dwRemainingHint"></p>
         </div>
 
         <div id="dwLocked" hidden>
           <p class="dw-locked-range" id="dwLockedRange"></p>
           <p class="hint">Locked in - no changes, no cancelling, until it passes.</p>
+        </div>
+
+        <div id="dwExhausted" hidden>
+          <p class="dw-locked-range">No windows left today</p>
+          <p class="hint">You've used all 3 double windows for today - more open up tomorrow.</p>
         </div>
       </div>
     </div>
@@ -1494,12 +1500,17 @@ input[type="time"], input[type="date"], select{
     sleepTime: "23:00",
     schoolRoutine: { enabled: true, days: [1,2,3,4,5], start: "08:00", end: "15:00" },
     schoolOverrides: {},
-    /* start/end are just the last-picked time-of-day, for repopulating
-       the form. startAt/endAt (ISO timestamps, or null) are the actual
-       locked-in commitment, if any - a one-time absolute window, not a
-       recurring daily schedule. */
-    doubleWindow: { start: "18:00", end: "20:00", startAt: null, endAt: null }
+    /* Just the last-picked time-of-day, so the form repopulates with
+       whatever was used last - not itself a commitment. */
+    doubleWindow: { start: "18:00", end: "20:00" },
+    /* Every window ever locked in, oldest first: {start, end, startAt,
+       endAt} with startAt/endAt as absolute ISO timestamps - each one a
+       one-time commitment, not a recurring daily schedule. Capped at
+       MAX_DOUBLE_WINDOWS_PER_DAY new lock-ins per app-day (see
+       doubleWindowsUsedToday) so the mechanic can't be chained all day. */
+    doubleWindows: []
   };
+  var MAX_DOUBLE_WINDOWS_PER_DAY = 3;
   var CHUNK_TARGET_MS = 60*60*1000;
   var LS_KEY = "timedown_v1";
 
@@ -1640,20 +1651,49 @@ input[type="time"], input[type="date"], select{
     };
   }
 
-  /* True if `now` falls in the user's configured double-ELO window
-     (recurring daily; handles a window that crosses midnight). */
-  /* A one-time locked-in commitment (absolute timestamps), not a
-     recurring daily schedule - true only between that exact start and
-     end, and only while a commitment actually exists. */
+  /* True if `now` falls inside any of the user's locked-in double-ELO
+     windows (each a one-time absolute-timestamp commitment, not a
+     recurring daily schedule - up to MAX_DOUBLE_WINDOWS_PER_DAY of them
+     can exist per app-day). */
   function isInDoubleWindow(now, settings){
-    var dw = settings.doubleWindow;
-    if (!dw || !dw.startAt || !dw.endAt) return false;
-    var start = new Date(dw.startAt), end = new Date(dw.endAt);
-    return now >= start && now < end;
+    var list = (settings.doubleWindows) || [];
+    for (var i = 0; i < list.length; i++) {
+      var dw = list[i];
+      if (!dw.startAt || !dw.endAt) continue;
+      if (now >= new Date(dw.startAt) && now < new Date(dw.endAt)) return true;
+    }
+    return false;
   }
-  function isDoubleWindowLocked(settings, now){
-    var dw = settings.doubleWindow;
-    return !!(dw && dw.endAt && (now || new Date()) < new Date(dw.endAt));
+  /* The soonest not-yet-ended commitment (upcoming or currently active) -
+     while one exists, the panel shows it locked instead of the form,
+     exactly as before. Returns null once every commitment has passed. */
+  function pendingDoubleWindow(settings, now){
+    now = now || new Date();
+    var list = (settings.doubleWindows) || [];
+    var soonest = null;
+    for (var i = 0; i < list.length; i++) {
+      var dw = list[i];
+      if (!dw.endAt || now >= new Date(dw.endAt)) continue;
+      if (!soonest || new Date(dw.startAt) < new Date(soonest.startAt)) soonest = dw;
+    }
+    return soonest;
+  }
+  /* How many windows were locked in during the app-day (wake-to-sleep
+     cycle, same boundary used for "today"'s stats/streak) that `now`
+     falls in - each window is bucketed by the cycle its own start falls
+     in, so one locked late at night still counts against that day even
+     after midnight. */
+  function doubleWindowsUsedToday(settings, now){
+    now = now || new Date();
+    var todayKey = dateKey(getCycle(now, settings).cycleStart);
+    var list = (settings.doubleWindows) || [];
+    var count = 0;
+    for (var i = 0; i < list.length; i++) {
+      var dw = list[i];
+      if (!dw.startAt) continue;
+      if (dateKey(getCycle(new Date(dw.startAt), settings).cycleStart) === todayKey) count++;
+    }
+    return count;
   }
   function currentEloRatePerMinute(now){
     var inWindow = isInDoubleWindow(now, settings);
@@ -1669,6 +1709,20 @@ input[type="time"], input[type="date"], select{
   var lastEloTickAt = Date.now();
   var lastEloPushAt = 0;
 
+  /* One-time upgrade from the old single-commitment shape (doubleWindow
+     carrying its own startAt/endAt) to the new array (doubleWindows) -
+     without this, an already-locked-in window from before this change
+     would silently stop doing anything the moment it loads under the new
+     code, since nothing would be reading doubleWindow.startAt anymore. */
+  function migrateDoubleWindowShape(s){
+    var old = s.doubleWindow;
+    if (old && old.startAt && old.endAt && (!s.doubleWindows || !s.doubleWindows.length)) {
+      s.doubleWindows = [{ start: old.start, end: old.end, startAt: old.startAt, endAt: old.endAt }];
+      s.doubleWindow = { start: old.start, end: old.end };
+    }
+    return s;
+  }
+
   function loadLocal(){
     try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch(e){ return {}; }
   }
@@ -1677,7 +1731,7 @@ input[type="time"], input[type="date"], select{
   }
   (function bootLocal(){
     var l = loadLocal();
-    if (l.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), l.settings);
+    if (l.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), l.settings));
     if (l.sessions) sessions = l.sessions;
     if (l.active) active = l.active;
     if (typeof l.eloPoints === "number") eloPoints = l.eloPoints;
@@ -1757,7 +1811,7 @@ input[type="time"], input[type="date"], select{
       if (doc.metadata.fromCache) return;
       if (!doc.exists) return;
       var data = doc.data();
-      if (data.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings);
+      if (data.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), data.settings));
       if ("active" in data) active = data.active || null;
       if (typeof data.eloPoints === "number") eloPoints = data.eloPoints;
       saveLocal();
@@ -1776,7 +1830,7 @@ input[type="time"], input[type="date"], select{
       var cloudMeta = results[1].exists ? results[1].data() : null;
 
       sessions = mergeSessionsById(sessions, cloudSessions);
-      if (cloudMeta && cloudMeta.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), cloudMeta.settings);
+      if (cloudMeta && cloudMeta.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), cloudMeta.settings));
       if (cloudMeta && "active" in cloudMeta) active = cloudMeta.active || active || null;
       if (cloudMeta && typeof cloudMeta.eloPoints === "number") eloPoints = Math.max(eloPoints, cloudMeta.eloPoints);
 
@@ -2128,22 +2182,22 @@ input[type="time"], input[type="date"], select{
       }
     }
 
-    /* Double window drawn as a striped region before chunks, so it
+    /* Double windows drawn as striped regions before chunks, so each
        reads as "this time is special" underneath whatever's logged
        there - completed/live chunks paint over it, and any part of a
-       chunk that actually falls inside the window gets its own
+       chunk that actually falls inside a window gets its own
        bonus-overlay pass afterward so that overlap stays visible even
-       though the plain chunk fill would otherwise cover the stripes. */
-    var dwRange = null;
-    var dw = settings.doubleWindow;
-    if (dw && dw.startAt && dw.endAt) {
-      var dwStart = new Date(dw.startAt), dwEnd = new Date(dw.endAt);
-      var dwClip = overlap(dwStart, dwEnd, cycle.cycleStart, cycle.cycleEnd);
+       though the plain chunk fill would otherwise cover the stripes.
+       Up to MAX_DOUBLE_WINDOWS_PER_DAY can exist for one day. */
+    var dwRanges = [];
+    (settings.doubleWindows || []).forEach(function(dw){
+      if (!dw.startAt || !dw.endAt) return;
+      var dwClip = overlap(new Date(dw.startAt), new Date(dw.endAt), cycle.cycleStart, cycle.cycleEnd);
       if (dwClip) {
-        dwRange = dwClip;
+        dwRanges.push(dwClip);
         addSeg("day-seg double-window", dwClip.start, dwClip.end);
       }
-    }
+    });
 
     var todayKey = dateKey(cycle.cycleStart);
     var chunkRanges = [];
@@ -2161,12 +2215,12 @@ input[type="time"], input[type="date"], select{
       chunkRanges.push({ start: st2, end: now });
     }
 
-    if (dwRange) {
+    dwRanges.forEach(function(dwRange){
       chunkRanges.forEach(function(cr){
         var ov = overlap(cr.start, cr.end, dwRange.start, dwRange.end);
         if (ov) addSeg("day-seg bonus-overlay", ov.start, ov.end, 0.6);
       });
-    }
+    });
 
     if (now >= cycle.cycleStart && now <= cycle.cycleEnd) {
       var marker = document.createElement("div");
@@ -2654,29 +2708,43 @@ input[type="time"], input[type="date"], select{
 
   /* ---------------- double window panel (on the card, not Settings) ----------------
      A one-time commitment, not a toggle: pick a start/end, confirm once,
-     and it's locked until it passes - no editing or cancelling. */
+     and it's locked until it passes - no editing or cancelling. Capped at
+     MAX_DOUBLE_WINDOWS_PER_DAY lock-ins per app-day so it can't be
+     chained back-to-back all day. */
   var doubleWindowPanelOpen = false;
   function renderDoubleWindowUI(){
-    var locked = isDoubleWindowLocked(settings);
-    document.getElementById("doubleWindowToggle").classList.toggle("enabled", locked);
-    document.getElementById("dwEditable").hidden = locked;
-    document.getElementById("dwLocked").hidden = !locked;
-    if (locked) {
+    var pending = pendingDoubleWindow(settings);
+    var usedToday = doubleWindowsUsedToday(settings);
+    var exhausted = !pending && usedToday >= MAX_DOUBLE_WINDOWS_PER_DAY;
+    document.getElementById("doubleWindowToggle").classList.toggle("enabled", !!pending);
+    document.getElementById("dwEditable").hidden = !!pending || exhausted;
+    document.getElementById("dwLocked").hidden = !pending;
+    document.getElementById("dwExhausted").hidden = !exhausted;
+    if (pending) {
       document.getElementById("dwLockedRange").textContent =
-        fmtTime(parseHM(settings.doubleWindow.start)) + " – " + fmtTime(parseHM(settings.doubleWindow.end));
+        fmtTime(parseHM(pending.start)) + " – " + fmtTime(parseHM(pending.end));
+    } else if (!exhausted) {
+      var left = MAX_DOUBLE_WINDOWS_PER_DAY - usedToday;
+      document.getElementById("dwRemainingHint").textContent =
+        left + " of " + MAX_DOUBLE_WINDOWS_PER_DAY + " double windows left today.";
     }
   }
   function toggleDoubleWindowPanel(){
     doubleWindowPanelOpen = !doubleWindowPanelOpen;
     document.getElementById("doubleWindowToggle").setAttribute("aria-expanded", doubleWindowPanelOpen ? "true" : "false");
     document.getElementById("doubleWindowPanel").classList.toggle("open", doubleWindowPanelOpen);
-    if (doubleWindowPanelOpen && !isDoubleWindowLocked(settings)) {
+    if (doubleWindowPanelOpen && !pendingDoubleWindow(settings)) {
       document.getElementById("dwStart").value = settings.doubleWindow.start;
       document.getElementById("dwEnd").value = settings.doubleWindow.end;
     }
   }
   document.getElementById("doubleWindowToggle").addEventListener("click", toggleDoubleWindowPanel);
   document.getElementById("dwSetBtn").addEventListener("click", function(){
+    if (doubleWindowsUsedToday(settings) >= MAX_DOUBLE_WINDOWS_PER_DAY) {
+      showToast("You've used all " + MAX_DOUBLE_WINDOWS_PER_DAY + " double windows for today");
+      renderDoubleWindowUI();
+      return;
+    }
     var startVal = document.getElementById("dwStart").value;
     var endVal = document.getElementById("dwEnd").value;
     if (!startVal || !endVal) return;
@@ -2694,7 +2762,10 @@ input[type="time"], input[type="date"], select{
     ).then(function(ok){
       if (!ok) return;
       var next = clone(settings);
-      next.doubleWindow = { start: startVal, end: endVal, startAt: startDT.toISOString(), endAt: endDT.toISOString() };
+      next.doubleWindow = { start: startVal, end: endVal };
+      next.doubleWindows = (next.doubleWindows || []).concat([
+        { start: startVal, end: endVal, startAt: startDT.toISOString(), endAt: endDT.toISOString() }
+      ]);
       persistSettings(next);
       renderDoubleWindowUI();
     });
