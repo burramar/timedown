@@ -1211,6 +1211,21 @@ input[type="time"], input[type="date"], select{
           <button class="btn-ghost small danger" id="rankupSoundClear" type="button">Remove</button>
         </div>
       </div>
+
+      <div class="sound-row">
+        <div class="sound-row-label">
+          <span>Rank up shine</span>
+          <span class="sound-status" id="rankupShineSoundStatus">None set</span>
+        </div>
+        <div class="sound-row-actions">
+          <button class="btn-ghost small" id="rankupShineSoundPlay" type="button">Preview</button>
+          <label class="btn-ghost small file-btn">
+            Choose
+            <input type="file" id="rankupShineSoundFile" accept="audio/*" hidden>
+          </label>
+          <button class="btn-ghost small danger" id="rankupShineSoundClear" type="button">Remove</button>
+        </div>
+      </div>
     </section>
 
     <section class="panel-section">
@@ -1703,6 +1718,7 @@ input[type="time"], input[type="date"], select{
   var refreshStartSoundStatus = setupSoundPicker("start", "startSoundFile", "startSoundStatus", "startSoundPlay", "startSoundClear");
   var refreshCompleteSoundStatus = setupSoundPicker("complete", "completeSoundFile", "completeSoundStatus", "completeSoundPlay", "completeSoundClear");
   var refreshRankupSoundStatus = setupSoundPicker("rankup", "rankupSoundFile", "rankupSoundStatus", "rankupSoundPlay", "rankupSoundClear");
+  var refreshRankupShineSoundStatus = setupSoundPicker("rankupShine", "rankupShineSoundFile", "rankupShineSoundStatus", "rankupShineSoundPlay", "rankupShineSoundClear");
 
   function persistSettings(next){
     settings = next;
@@ -1902,6 +1918,12 @@ input[type="time"], input[type="date"], select{
     document.getElementById("rankUpOverlay").hidden = false;
     playSound("rankup");
     buzz([15,40,15,40,25]);
+    /* Matches the .rankup-shine animation-delay (.95s) so this fires
+       right as the light sweep crosses the badge - skipped if the
+       screen's already been dismissed by then. */
+    setTimeout(function(){
+      if (!document.getElementById("rankUpOverlay").hidden) playSound("rankupShine");
+    }, 950);
   }
   function closeRankUp(){ document.getElementById("rankUpOverlay").hidden = true; }
   document.getElementById("rankUpClose").addEventListener("click", closeRankUp);
@@ -2344,6 +2366,7 @@ input[type="time"], input[type="date"], select{
     refreshStartSoundStatus();
     refreshCompleteSoundStatus();
     refreshRankupSoundStatus();
+    refreshRankupShineSoundStatus();
     renderAccountStatus();
     settingsOverlay.hidden = false;
   }
