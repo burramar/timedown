@@ -1097,7 +1097,7 @@ input[type="time"], input[type="date"], select{
     <p class="rankup-teaser">Rank up</p>
     <div class="rankup-badge-wrap">
       <div class="rankup-burst" aria-hidden="true"></div>
-      <svg class="rankup-badge" viewBox="0 0 100 100" aria-hidden="true">
+      <svg class="rankup-badge" id="rankUpBadge" viewBox="0 0 100 100" aria-hidden="true">
         <polygon class="rankup-gem-outline" points="50,5 90,29 90,71 50,95 10,71 10,29"/>
         <polyline class="rankup-gem-facet" points="10,29 50,47 90,29"/>
         <polyline class="rankup-gem-facet" points="10,71 50,47 90,71"/>
@@ -1955,6 +1955,54 @@ input[type="time"], input[type="date"], select{
     { glow:"150,70,170",  light:"#D9A6E8", dark:"#2A1030" }, // Alexandrite
     { glow:"180,80,50",   light:"#E8A98A", dark:"#3A1608" }  // Painite
   ];
+  /* One badge silhouette per rank, echoing the real material/cut: a raw
+     circle, an iron shield, quartz's hexagonal prism, an elongated
+     titanium hexagon, an irregular obsidian shard, the classic
+     emerald-cut octagon, a round-brilliant sapphire with spoke facets,
+     an alexandrite cushion oval, and a sharp painite kite (painite's
+     real crystals are pointed bipyramids). */
+  var RANK_SHAPES = [
+    '<circle class="rankup-gem-outline" cx="50" cy="50" r="42"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="10" x2="50" y2="90"/>' +
+      '<line class="rankup-gem-facet" x1="10" y1="50" x2="90" y2="50"/>',
+    '<polygon class="rankup-gem-outline" points="50,6 92,34 78,92 22,92 8,34"/>' +
+      '<polyline class="rankup-gem-facet" points="8,34 50,58 92,34"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="58" x2="50" y2="6"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="58" x2="78" y2="92"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="58" x2="22" y2="92"/>',
+    '<polygon class="rankup-gem-outline" points="50,5 90,29 90,71 50,95 10,71 10,29"/>' +
+      '<polyline class="rankup-gem-facet" points="10,29 50,47 90,29"/>' +
+      '<polyline class="rankup-gem-facet" points="10,71 50,47 90,71"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="5" x2="50" y2="47"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="95" x2="50" y2="47"/>',
+    '<polygon class="rankup-gem-outline" points="50,3 76,18 76,82 50,97 24,82 24,18"/>' +
+      '<line class="rankup-gem-facet" x1="24" y1="18" x2="76" y2="82"/>' +
+      '<line class="rankup-gem-facet" x1="76" y1="18" x2="24" y2="82"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="3" x2="50" y2="97"/>',
+    '<polygon class="rankup-gem-outline" points="50,4 88,26 94,66 54,96 12,72 6,30"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="4" x2="54" y2="96"/>' +
+      '<line class="rankup-gem-facet" x1="6" y1="30" x2="94" y2="66"/>' +
+      '<line class="rankup-gem-facet" x1="12" y1="72" x2="88" y2="26"/>',
+    '<polygon class="rankup-gem-outline" points="36,6 64,6 90,26 90,74 64,94 36,94 10,74 10,26"/>' +
+      '<line class="rankup-gem-facet" x1="10" y1="26" x2="90" y2="26"/>' +
+      '<line class="rankup-gem-facet" x1="10" y1="74" x2="90" y2="74"/>' +
+      '<line class="rankup-gem-facet" x1="36" y1="6" x2="36" y2="94"/>' +
+      '<line class="rankup-gem-facet" x1="64" y1="6" x2="64" y2="94"/>',
+    '<circle class="rankup-gem-outline" cx="50" cy="50" r="45"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="50" x2="50" y2="5"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="50" x2="90" y2="29"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="50" x2="90" y2="71"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="50" x2="50" y2="95"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="50" x2="10" y2="71"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="50" x2="10" y2="29"/>',
+    '<ellipse class="rankup-gem-outline" cx="50" cy="50" rx="36" ry="46"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="6" x2="50" y2="94"/>' +
+      '<line class="rankup-gem-facet" x1="20" y1="30" x2="80" y2="70"/>' +
+      '<line class="rankup-gem-facet" x1="80" y1="30" x2="20" y2="70"/>',
+    '<polygon class="rankup-gem-outline" points="50,2 66,50 50,98 34,50"/>' +
+      '<line class="rankup-gem-facet" x1="50" y1="2" x2="50" y2="98"/>' +
+      '<line class="rankup-gem-facet" x1="34" y1="50" x2="66" y2="50"/>'
+  ];
   function showRankUp(info){
     var stage = document.querySelector(".rankup-stage");
     var c = RANK_COLORS[info.rankIndex] || RANK_COLORS[0];
@@ -1962,6 +2010,7 @@ input[type="time"], input[type="date"], select{
     stage.style.setProperty("--rank-light", c.light);
     stage.style.setProperty("--rank-dark", c.dark);
     stage.classList.toggle("rankup-shift", info.rankName === "Alexandrite");
+    document.getElementById("rankUpBadge").innerHTML = RANK_SHAPES[info.rankIndex] || RANK_SHAPES[0];
 
     document.getElementById("rankUpName").textContent = info.rankName;
     document.getElementById("rankUpDiv").textContent = info.divName;
