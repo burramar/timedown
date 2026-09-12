@@ -82,9 +82,11 @@ button{font-family:inherit;}
   pointer-events:none;
   opacity:0;
   clip-path:circle(0px at 0px 0px);
+  will-change:clip-path;
+  transform:translateZ(0);
 }
 .theme-spill-glow{
-  filter:blur(22px);
+  filter:blur(12px);
   opacity:.55;
 }
 .theme-splatter{
@@ -3011,7 +3013,19 @@ input[type="time"], input[type="date"], select{
     }
   }
 
+  var themeMainAnim = null;
+  var themeGlowAnim = null;
+
+  function killThemeAnims(){
+    if (themeMainAnim) { try { themeMainAnim.cancel(); } catch(e){} themeMainAnim = null; }
+    if (themeGlowAnim) { try { themeGlowAnim.cancel(); } catch(e){} themeGlowAnim = null; }
+  }
+
   function toggleTheme(originX, originY){
+    // Cancel any in-flight spill first so a fast second click can never get stuck
+    // behind a "finished" (but still fill:forwards-held) animation from the last click.
+    killThemeAnims();
+
     var next = currentTheme() === "dark" ? "light" : "dark";
     var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduceMotion) { setThemeAttr(next); renderAll(); return; }
@@ -3035,22 +3049,24 @@ input[type="time"], input[type="date"], select{
     var endClip = "circle(" + maxR + "px at " + originX + "px " + originY + "px)";
     var glowEndClip = "circle(" + (maxR + 36) + "px at " + originX + "px " + originY + "px)";
 
-    var mainAnim = spill.animate(
+    themeMainAnim = spill.animate(
       [{ clipPath: startClip }, { clipPath: endClip }],
       { duration: 750, easing: "cubic-bezier(.35,0,.15,1)", fill: "forwards" }
     );
-    glow.animate(
+    themeGlowAnim = glow.animate(
       [{ clipPath: startClip }, { clipPath: glowEndClip }],
       { duration: 750, easing: "cubic-bezier(.35,0,.15,1)", fill: "forwards" }
     );
 
-    mainAnim.onfinish = function(){
+    // Apply the theme as soon as the reveal has visually covered the screen, then
+    // release the WAAPI hold via cancel() (not just resetting inline styles, which
+    // fill:"forwards" would otherwise keep overriding) before hiding the overlay.
+    themeMainAnim.onfinish = function(){
       setThemeAttr(next);
       renderAll();
+      killThemeAnims();
       spill.style.opacity = "0";
       glow.style.opacity = "0";
-      spill.style.clipPath = "circle(0px at " + originX + "px " + originY + "px)";
-      glow.style.clipPath = "circle(0px at " + originX + "px " + originY + "px)";
     };
   }
 
