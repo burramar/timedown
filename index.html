@@ -118,6 +118,63 @@ button{font-family:inherit;}
 }
 .timer-caption.past{color:var(--danger);}
 
+/* ---------- ELO / rank meter ---------- */
+.elo-card{
+  max-width:720px;
+  width:100%;
+  margin:14px auto 0;
+  padding:16px clamp(16px, 5vw, 28px) 18px;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:18px;
+  box-shadow:var(--shadow);
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.elo-top{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.elo-rank{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.elo-rank-name{
+  font-size:clamp(1.3rem, 4.5vw, 1.8rem);
+  font-weight:600;
+  color:var(--ink);
+}
+.elo-div-pill{
+  font-size:0.76rem;
+  font-weight:600;
+  color:var(--accent-strong);
+  background:var(--accent-soft);
+  padding:2px 9px;
+  border-radius:999px;
+}
+.elo-rate{
+  font-family:"IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric:tabular-nums;
+  font-size:0.9rem;
+  font-weight:600;
+  white-space:nowrap;
+}
+.elo-rate.gain{color:var(--accent);}
+.elo-rate.lose{color:var(--danger);}
+.elo-bar-track{
+  height:12px;
+  border-radius:999px;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  overflow:hidden;
+}
+.elo-bar-fill{
+  height:100%;
+  border-radius:999px;
+  width:0%;
+  background:var(--accent);
+  transition:width .4s ease, background .3s ease;
+}
+.elo-bar-fill.lose{background:var(--danger);}
+.elo-bottom{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.elo-points{font-size:0.82rem;color:var(--ink-soft);}
+.elo-next{font-size:0.78rem;color:var(--ink-faint);}
+
 /* ---------- Card ---------- */
 .page{
   max-width:460px;
@@ -675,6 +732,23 @@ input[type="time"], input[type="date"], select{
   <p class="timer-caption" id="timerCaption">until bedtime</p>
 </section>
 
+<section class="elo-card">
+  <div class="elo-top">
+    <div class="elo-rank">
+      <span class="elo-rank-name" id="eloRankName">Copper</span>
+      <span class="elo-div-pill" id="eloDivName">III</span>
+    </div>
+    <span class="elo-rate" id="eloRate">-0.1/min</span>
+  </div>
+  <div class="elo-bar-track">
+    <div class="elo-bar-fill" id="eloBarFill"></div>
+  </div>
+  <div class="elo-bottom">
+    <span class="elo-points mono" id="eloPointsText">0 ELO</span>
+    <span class="elo-next" id="eloNextText"></span>
+  </div>
+</section>
+
 <div class="page">
   <div class="card" id="card">
     <div class="chunk-zone">
@@ -830,6 +904,22 @@ input[type="time"], input[type="date"], select{
     </section>
 
     <section class="panel-section">
+      <h3>Double window</h3>
+      <p class="hint">During this window, staying in a chunk earns double ELO - but sitting outside one costs five times the usual rate instead of the usual small drip.</p>
+      <label class="row-check"><input type="checkbox" id="doubleWindowEnabled"> Enable double window</label>
+      <div class="two-col">
+        <div class="field-row">
+          <label for="doubleWindowStart">Start</label>
+          <input type="time" id="doubleWindowStart">
+        </div>
+        <div class="field-row">
+          <label for="doubleWindowEnd">End</label>
+          <input type="time" id="doubleWindowEnd">
+        </div>
+      </div>
+    </section>
+
+    <section class="panel-section">
       <h3>Sounds</h3>
       <p class="hint">Pick a short clip to play when you start or end a chunk. Stored only on this device.</p>
 
@@ -953,7 +1043,8 @@ input[type="time"], input[type="date"], select{
     wakeTime: "07:00",
     sleepTime: "23:00",
     schoolRoutine: { enabled: true, days: [1,2,3,4,5], start: "08:00", end: "15:00" },
-    schoolOverrides: {}
+    schoolOverrides: {},
+    doubleWindow: { enabled: false, start: "18:00", end: "20:00" }
   };
   var CHUNK_TARGET_MS = 60*60*1000;
   var LS_KEY = "timedown_v1";
@@ -1025,22 +1116,85 @@ input[type="time"], input[type="date"], select{
     return Math.max(0, totalSec - schoolSec);
   }
 
+  /* ---------------- rank / ELO ----------------
+     +1 ELO/min while in a chunk, -0.1/min otherwise; doubled to +2/-0.5
+     inside the double window. Each rank's point span grows superlinearly
+     so later ranks take dramatically longer than early ones. */
+  var RANKS = ["Copper","Iron","Quartz","Titanium","Obsidian","Emerald","Sapphire","Alexandrite","Painite"];
+  var DIVISIONS = ["III","II","I"];
+
+  function rankSpan(rankIndex){
+    return Math.round(50 * Math.pow(rankIndex + 1, 2.1));
+  }
+  function rankThresholds(){
+    var thresholds = [0];
+    for (var r = 0; r < RANKS.length; r++) thresholds.push(thresholds[r] + rankSpan(r));
+    return thresholds;
+  }
+  function getRankInfo(elo){
+    elo = Math.max(0, elo);
+    var thresholds = rankThresholds();
+    var rankIndex = 0;
+    for (var r = 0; r < RANKS.length; r++) { if (elo >= thresholds[r]) rankIndex = r; else break; }
+    var rankStart = thresholds[rankIndex];
+    var rankEnd = thresholds[rankIndex + 1];
+    var span = rankEnd - rankStart;
+    var isTopRank = rankIndex === RANKS.length - 1;
+    var progressInRank = span > 0 ? Math.min(1, (elo - rankStart) / span) : 1;
+    var divIndex = Math.min(DIVISIONS.length - 1, Math.floor(progressInRank * DIVISIONS.length));
+    var divStart = rankStart + (span * divIndex / DIVISIONS.length);
+    var divEnd = rankStart + (span * (divIndex + 1) / DIVISIONS.length);
+    var isMax = isTopRank && divIndex === DIVISIONS.length - 1 && elo >= divEnd;
+    return {
+      elo: elo,
+      rankName: RANKS[rankIndex],
+      divName: DIVISIONS[divIndex],
+      divStart: divStart,
+      divEnd: divEnd,
+      progressInDiv: isMax ? 1 : (divEnd > divStart ? Math.min(1, Math.max(0, (elo - divStart) / (divEnd - divStart))) : 1),
+      pointsToNextDiv: isMax ? 0 : Math.max(0, divEnd - elo),
+      isMax: isMax
+    };
+  }
+
+  /* True if `now` falls in the user's configured double-ELO window
+     (recurring daily; handles a window that crosses midnight). */
+  function isInDoubleWindow(now, settings){
+    var dw = settings.doubleWindow;
+    if (!dw || !dw.enabled) return false;
+    var start = combine(now, parseHM(dw.start));
+    var end = combine(now, parseHM(dw.end));
+    if (end <= start) end = addDays(end, 1);
+    if (now >= start && now < end) return true;
+    var startPrev = addDays(start, -1), endPrev = addDays(end, -1);
+    return now >= startPrev && now < endPrev;
+  }
+  function currentEloRatePerMinute(now){
+    var inWindow = isInDoubleWindow(now, settings);
+    if (active) return inWindow ? 2 : 1;
+    return inWindow ? -0.5 : -0.1;
+  }
+
   /* ---------------- storage (this device only) ---------------- */
   var settings = DEFAULT_SETTINGS;
   var sessions = [];
   var active = null;
+  var eloPoints = 0;
+  var lastEloTickAt = Date.now();
+  var lastEloPushAt = 0;
 
   function loadLocal(){
     try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch(e){ return {}; }
   }
   function saveLocal(){
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: settings, sessions: sessions, active: active })); } catch(e){}
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: settings, sessions: sessions, active: active, eloPoints: eloPoints })); } catch(e){}
   }
   (function bootLocal(){
     var l = loadLocal();
     if (l.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), l.settings);
     if (l.sessions) sessions = l.sessions;
     if (l.active) active = l.active;
+    if (typeof l.eloPoints === "number") eloPoints = l.eloPoints;
   })();
 
   /* Sessions already on disk at boot don't replay the day-bar "new chunk"
@@ -1098,13 +1252,17 @@ input[type="time"], input[type="date"], select{
       var data = doc.data();
       if (data.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings);
       if ("active" in data) active = data.active || null;
+      if (typeof data.eloPoints === "number") eloPoints = data.eloPoints;
       saveLocal();
       renderAll();
     }, function(){});
   }
   /* One-time on sign-in: combine whatever's local with whatever's already
      in the cloud so neither side loses chunks, push the merged result
-     back up, then attach live listeners for everything after. */
+     back up, then attach live listeners for everything after. ELO is a
+     single running number rather than a list, so it can't be unioned like
+     chunks - taking the higher of the two avoids the sign-in accidentally
+     rolling progress backward either way. */
   function migrateAndAttach(){
     Promise.all([ userSessionsCol().get(), userMetaDoc().get() ]).then(function(results){
       var cloudSessions = results[0].docs.map(function(d){ return d.data(); });
@@ -1113,6 +1271,7 @@ input[type="time"], input[type="date"], select{
       sessions = mergeSessionsById(sessions, cloudSessions);
       if (cloudMeta && cloudMeta.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), cloudMeta.settings);
       if (cloudMeta && "active" in cloudMeta) active = cloudMeta.active || active || null;
+      if (cloudMeta && typeof cloudMeta.eloPoints === "number") eloPoints = Math.max(eloPoints, cloudMeta.eloPoints);
 
       animatedChunkIds = {};
       sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
@@ -1121,7 +1280,7 @@ input[type="time"], input[type="date"], select{
 
       var batch = db.batch();
       sessions.forEach(function(s){ batch.set(userSessionsCol().doc(s.id), s); });
-      batch.set(userMetaDoc(), { settings: settings, active: active }, { merge: true });
+      batch.set(userMetaDoc(), { settings: settings, active: active, eloPoints: eloPoints }, { merge: true });
       return batch.commit();
     }).catch(function(){}).then(attachCloud);
   }
@@ -1314,7 +1473,9 @@ input[type="time"], input[type="date"], select{
   var els = {};
   ["hh","mm","ss","timerCaption","toggleBtn","toggleShape","toggleLabel",
    "chunkInfo","chunkFill","chunkElapsed","dayBarTrack","wakeLabel","sleepLabel",
-   "logList","logEmpty","dateLabel","streakPill","statToast"].forEach(function(id){ els[id] = document.getElementById(id); });
+   "logList","logEmpty","dateLabel","streakPill","statToast",
+   "eloRankName","eloDivName","eloRate","eloBarFill","eloPointsText","eloNextText"
+  ].forEach(function(id){ els[id] = document.getElementById(id); });
 
   function updateDateLabel(){
     els.dateLabel.textContent = new Date().toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" });
@@ -1398,6 +1559,27 @@ input[type="time"], input[type="date"], select{
     }
 
     renderDayBar(now, cycle);
+    tickElo(now);
+  }
+
+  /* Advances ELO by whatever's elapsed since the last tick at the current
+     rate. Uses a real wall-clock delta (not a fixed 1s assumption) so a
+     throttled/backgrounded tab still catches up correctly, capped at 5
+     minutes per tick so a long-suspended tab can't cause a huge swing. */
+  function tickElo(now){
+    var nowMs = now.getTime();
+    var deltaSec = Math.min(300, Math.max(0, (nowMs - lastEloTickAt) / 1000));
+    lastEloTickAt = nowMs;
+    if (deltaSec > 0) {
+      var ratePerMin = currentEloRatePerMinute(now);
+      eloPoints = Math.max(0, eloPoints + ratePerMin * (deltaSec / 60));
+      saveLocal();
+    }
+    renderEloMeter();
+    if (fbUser && nowMs - lastEloPushAt > 20000) {
+      lastEloPushAt = nowMs;
+      userMetaDoc().set({ eloPoints: eloPoints }, { merge: true }).catch(function(){});
+    }
   }
 
   function renderToggle(){
@@ -1408,6 +1590,22 @@ input[type="time"], input[type="date"], select{
     els.toggleBtn.setAttribute("aria-label", isActive ? "End the current chunk" : "Start a productive chunk");
     els.toggleLabel.textContent = isActive ? "Tap to end the chunk" : "Tap to start a chunk";
     els.chunkInfo.hidden = !isActive;
+  }
+
+  function renderEloMeter(){
+    var info = getRankInfo(eloPoints);
+    var rate = currentEloRatePerMinute(new Date());
+    var gaining = rate > 0;
+
+    els.eloRankName.textContent = info.rankName;
+    els.eloDivName.textContent = info.isMax ? "MAX" : info.divName;
+    els.eloRate.textContent = (gaining ? "+" : "") + rate.toFixed(1) + "/min";
+    els.eloRate.classList.toggle("gain", gaining);
+    els.eloRate.classList.toggle("lose", !gaining);
+    els.eloBarFill.style.width = (info.progressInDiv * 100) + "%";
+    els.eloBarFill.classList.toggle("lose", !gaining);
+    els.eloPointsText.textContent = Math.round(info.elo) + " ELO";
+    els.eloNextText.textContent = info.isMax ? "top rank" : (Math.ceil(info.pointsToNextDiv) + " to next");
   }
 
   function renderLog(){
@@ -1805,6 +2003,9 @@ input[type="time"], input[type="date"], select{
     document.getElementById("schoolEnabled").checked = !!draft.schoolRoutine.enabled;
     document.getElementById("schoolStart").value = draft.schoolRoutine.start;
     document.getElementById("schoolEnd").value = draft.schoolRoutine.end;
+    document.getElementById("doubleWindowEnabled").checked = !!draft.doubleWindow.enabled;
+    document.getElementById("doubleWindowStart").value = draft.doubleWindow.start;
+    document.getElementById("doubleWindowEnd").value = draft.doubleWindow.end;
     renderWeekdayPicker();
     updateDayLengthHint();
     document.getElementById("overrideDate").value = "";
@@ -1857,6 +2058,12 @@ input[type="time"], input[type="date"], select{
   });
   document.getElementById("schoolStart").addEventListener("input", function(e){ draft.schoolRoutine.start = e.target.value; });
   document.getElementById("schoolEnd").addEventListener("input", function(e){ draft.schoolRoutine.end = e.target.value; });
+
+  document.getElementById("doubleWindowEnabled").addEventListener("change", function(e){
+    draft.doubleWindow.enabled = e.target.checked;
+  });
+  document.getElementById("doubleWindowStart").addEventListener("input", function(e){ draft.doubleWindow.start = e.target.value; });
+  document.getElementById("doubleWindowEnd").addEventListener("input", function(e){ draft.doubleWindow.end = e.target.value; });
 
   document.getElementById("overrideType").addEventListener("change", function(e){
     document.getElementById("overrideCustomTimes").hidden = e.target.value !== "custom";
