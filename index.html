@@ -1828,6 +1828,18 @@ input[type="time"], input[type="date"], select{
       renderAll();
     }, function(){});
   }
+  /* A plain .get() with persistence enabled (enablePersistence above) can
+     resolve straight from this device's own local IndexedDB cache instead
+     of reaching the server - especially right at startup, before the
+     backend stream is even connected. For migrateAndAttach that's fatal:
+     it'd read back exactly what this device last wrote, "merge" stale
+     against stale, and then commit that straight over whatever a newer
+     write from another device already put on the server. Forcing a server
+     read here (falling back to cache only if actually offline) is what
+     makes that merge mean anything. */
+  function freshGet(ref){
+    return ref.get({ source: "server" }).catch(function(){ return ref.get(); });
+  }
   /* One-time on sign-in: combine whatever's local with whatever's already
      in the cloud so neither side loses chunks, push the merged result
      back up, then attach live listeners for everything after. ELO is a
@@ -1835,7 +1847,7 @@ input[type="time"], input[type="date"], select{
      chunks - taking the higher of the two avoids the sign-in accidentally
      rolling progress backward either way. */
   function migrateAndAttach(){
-    Promise.all([ userSessionsCol().get(), userMetaDoc().get() ]).then(function(results){
+    Promise.all([ freshGet(userSessionsCol()), freshGet(userMetaDoc()) ]).then(function(results){
       var cloudSessions = results[0].docs.map(function(d){ return d.data(); });
       var cloudMeta = results[1].exists ? results[1].data() : null;
 
