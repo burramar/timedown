@@ -1905,7 +1905,17 @@ input[type="time"], input[type="date"], select{
 
       sessions = mergeSessionsById(sessions, cloudSessions);
       if (cloudMeta && cloudMeta.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), cloudMeta.settings));
-      if (cloudMeta && "active" in cloudMeta) active = cloudMeta.active || active || null;
+      /* No "|| active" fallback here: cloudMeta.active is falsy both when
+         there's genuinely no chunk running (null, a real, meaningful
+         answer from the server) and when the field is simply absent - the
+         "active" in cloudMeta check above already tells them apart, so by
+         this point a falsy value means "the cloud says no chunk is
+         running", not "the cloud has no opinion". Falling back to the
+         local value here (as this used to) meant a chunk properly ended on
+         another device while this one was closed would come back the
+         moment it reopened, since local's stale in-progress object would
+         win over the cloud's correct null. */
+      if (cloudMeta && "active" in cloudMeta) active = cloudMeta.active || null;
       if (cloudMeta && typeof cloudMeta.eloPoints === "number") {
         if (eloLinked) {
           adoptEloCheckpoint(cloudMeta);
