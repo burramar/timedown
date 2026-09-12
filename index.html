@@ -637,7 +637,7 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
 .rankup-burst{
   position:absolute;
   inset:-70px;
-  background:radial-gradient(circle, rgba(var(--rank-glow),0.55) 0%, rgba(var(--rank-glow),0.16) 42%, rgba(var(--rank-glow),0) 72%);
+  background:radial-gradient(circle, rgba(var(--rank-glow),0.32) 0%, rgba(var(--rank-glow),0.1) 42%, rgba(var(--rank-glow),0) 72%);
   opacity:0;
   animation:rankupBurst 1.2s ease-out .2s forwards;
 }
@@ -649,8 +649,9 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
   filter:drop-shadow(0 0 20px rgba(var(--rank-glow),.65));
   animation:rankupBadgeIn .7s cubic-bezier(.2,.85,.25,1.3) .25s forwards;
 }
-.rankup-gem-outline{fill:rgba(255,255,255,0.08);stroke:var(--rank-light);stroke-width:2.5;stroke-linejoin:round;}
-.rankup-gem-facet{fill:none;stroke:rgba(242,246,250,0.55);stroke-width:1.1;}
+.rankup-gem-outline{fill:rgba(var(--rank-glow),0.16);stroke:var(--rank-light);stroke-width:2.5;stroke-linejoin:round;}
+.rankup-gem-facet{fill:none;stroke:var(--rank-light);stroke-width:1;opacity:.55;}
+.rankup-gem-ring{fill:none;stroke:var(--rank-light);stroke-width:1;opacity:.5;}
 .rankup-shine{
   position:absolute;
   top:0;left:-140%;
@@ -1258,20 +1259,30 @@ input[type="time"], input[type="date"], select{
 
     <section class="panel-section">
       <h3>Preview</h3>
-      <p class="hint">Shows the rank-up screen for the chosen rank - doesn't change your real ELO.</p>
-      <div class="field-row">
-        <label for="previewRankSelect">Rank</label>
-        <select id="previewRankSelect">
-          <option value="0">Copper</option>
-          <option value="1">Iron</option>
-          <option value="2">Quartz</option>
-          <option value="3">Titanium</option>
-          <option value="4">Obsidian</option>
-          <option value="5">Emerald</option>
-          <option value="6">Sapphire</option>
-          <option value="7">Alexandrite</option>
-          <option value="8">Painite</option>
-        </select>
+      <p class="hint">Shows the rank-up screen for the chosen rank and division - doesn't change your real ELO.</p>
+      <div class="two-col">
+        <div class="field-row">
+          <label for="previewRankSelect">Rank</label>
+          <select id="previewRankSelect">
+            <option value="0">Copper</option>
+            <option value="1">Iron</option>
+            <option value="2">Quartz</option>
+            <option value="3">Titanium</option>
+            <option value="4">Obsidian</option>
+            <option value="5">Emerald</option>
+            <option value="6">Sapphire</option>
+            <option value="7">Alexandrite</option>
+            <option value="8">Painite</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label for="previewDivSelect">Division</label>
+          <select id="previewDivSelect">
+            <option value="0">I</option>
+            <option value="1">II</option>
+            <option value="2">III</option>
+          </select>
+        </div>
       </div>
       <button class="btn-ghost small" id="previewRankUpBtn" type="button">Preview rank-up screen</button>
     </section>
@@ -1949,7 +1960,7 @@ input[type="time"], input[type="date"], select{
     { glow:"150,150,155", light:"#C9C9CE", dark:"#242427" }, // Iron
     { glow:"210,210,222", light:"#F1F1F6", dark:"#2B2B33" }, // Quartz
     { glow:"120,140,155", light:"#A9BAC7", dark:"#16232C" }, // Titanium
-    { glow:"125,95,190",  light:"#B9A6E8", dark:"#1D1030" }, // Obsidian
+    { glow:"72,55,115",   light:"#9B7FE0", dark:"#140A22" }, // Obsidian
     { glow:"40,150,105",  light:"#7FE3B4", dark:"#04321F" }, // Emerald
     { glow:"58,130,190",  light:"#8CB0D2", dark:"#0B2233" }, // Sapphire
     { glow:"150,70,170",  light:"#D9A6E8", dark:"#2A1030" }, // Alexandrite
@@ -1962,47 +1973,59 @@ input[type="time"], input[type="date"], select{
      an alexandrite cushion oval, and a sharp painite kite (painite's
      real crystals are pointed bipyramids). */
   var RANK_SHAPES = [
-    '<circle class="rankup-gem-outline" cx="50" cy="50" r="42"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="10" x2="50" y2="90"/>' +
-      '<line class="rankup-gem-facet" x1="10" y1="50" x2="90" y2="50"/>',
-    '<polygon class="rankup-gem-outline" points="50,6 92,34 78,92 22,92 8,34"/>' +
-      '<polyline class="rankup-gem-facet" points="8,34 50,58 92,34"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="58" x2="50" y2="6"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="58" x2="78" y2="92"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="58" x2="22" y2="92"/>',
-    '<polygon class="rankup-gem-outline" points="50,5 90,29 90,71 50,95 10,71 10,29"/>' +
-      '<polyline class="rankup-gem-facet" points="10,29 50,47 90,29"/>' +
-      '<polyline class="rankup-gem-facet" points="10,71 50,47 90,71"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="5" x2="50" y2="47"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="95" x2="50" y2="47"/>',
-    '<polygon class="rankup-gem-outline" points="50,3 76,18 76,82 50,97 24,82 24,18"/>' +
-      '<line class="rankup-gem-facet" x1="24" y1="18" x2="76" y2="82"/>' +
-      '<line class="rankup-gem-facet" x1="76" y1="18" x2="24" y2="82"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="3" x2="50" y2="97"/>',
-    '<polygon class="rankup-gem-outline" points="50,4 88,26 94,66 54,96 12,72 6,30"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="4" x2="54" y2="96"/>' +
-      '<line class="rankup-gem-facet" x1="6" y1="30" x2="94" y2="66"/>' +
-      '<line class="rankup-gem-facet" x1="12" y1="72" x2="88" y2="26"/>',
-    '<polygon class="rankup-gem-outline" points="36,6 64,6 90,26 90,74 64,94 36,94 10,74 10,26"/>' +
-      '<line class="rankup-gem-facet" x1="10" y1="26" x2="90" y2="26"/>' +
-      '<line class="rankup-gem-facet" x1="10" y1="74" x2="90" y2="74"/>' +
-      '<line class="rankup-gem-facet" x1="36" y1="6" x2="36" y2="94"/>' +
-      '<line class="rankup-gem-facet" x1="64" y1="6" x2="64" y2="94"/>',
-    '<circle class="rankup-gem-outline" cx="50" cy="50" r="45"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="50" x2="50" y2="5"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="50" x2="90" y2="29"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="50" x2="90" y2="71"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="50" x2="50" y2="95"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="50" x2="10" y2="71"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="50" x2="10" y2="29"/>',
-    '<ellipse class="rankup-gem-outline" cx="50" cy="50" rx="36" ry="46"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="6" x2="50" y2="94"/>' +
-      '<line class="rankup-gem-facet" x1="20" y1="30" x2="80" y2="70"/>' +
-      '<line class="rankup-gem-facet" x1="80" y1="30" x2="20" y2="70"/>',
-    '<polygon class="rankup-gem-outline" points="50,2 66,50 50,98 34,50"/>' +
-      '<line class="rankup-gem-facet" x1="50" y1="2" x2="50" y2="98"/>' +
-      '<line class="rankup-gem-facet" x1="34" y1="50" x2="66" y2="50"/>'
+    { outline:'<circle class="rankup-gem-outline" cx="50" cy="50" r="42"/>',
+      facets:'<line class="rankup-gem-facet" x1="50" y1="10" x2="50" y2="90"/>' +
+        '<line class="rankup-gem-facet" x1="10" y1="50" x2="90" y2="50"/>' },
+    { outline:'<polygon class="rankup-gem-outline" points="50,6 92,34 78,92 22,92 8,34"/>',
+      facets:'<polyline class="rankup-gem-facet" points="8,34 50,58 92,34"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="58" x2="50" y2="6"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="58" x2="78" y2="92"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="58" x2="22" y2="92"/>' },
+    { outline:'<polygon class="rankup-gem-outline" points="50,5 90,29 90,71 50,95 10,71 10,29"/>',
+      facets:'<polyline class="rankup-gem-facet" points="10,29 50,47 90,29"/>' +
+        '<polyline class="rankup-gem-facet" points="10,71 50,47 90,71"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="5" x2="50" y2="47"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="95" x2="50" y2="47"/>' },
+    { outline:'<polygon class="rankup-gem-outline" points="50,3 76,18 76,82 50,97 24,82 24,18"/>',
+      facets:'<line class="rankup-gem-facet" x1="24" y1="18" x2="76" y2="82"/>' +
+        '<line class="rankup-gem-facet" x1="76" y1="18" x2="24" y2="82"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="3" x2="50" y2="97"/>' },
+    { outline:'<polygon class="rankup-gem-outline" points="50,4 88,26 94,66 54,96 12,72 6,30"/>',
+      facets:'<line class="rankup-gem-facet" x1="50" y1="4" x2="54" y2="96"/>' +
+        '<line class="rankup-gem-facet" x1="6" y1="30" x2="94" y2="66"/>' +
+        '<line class="rankup-gem-facet" x1="12" y1="72" x2="88" y2="26"/>' },
+    { outline:'<polygon class="rankup-gem-outline" points="36,6 64,6 90,26 90,74 64,94 36,94 10,74 10,26"/>',
+      facets:'<line class="rankup-gem-facet" x1="10" y1="26" x2="90" y2="26"/>' +
+        '<line class="rankup-gem-facet" x1="10" y1="74" x2="90" y2="74"/>' +
+        '<line class="rankup-gem-facet" x1="36" y1="6" x2="36" y2="94"/>' +
+        '<line class="rankup-gem-facet" x1="64" y1="6" x2="64" y2="94"/>' },
+    { outline:'<circle class="rankup-gem-outline" cx="50" cy="50" r="45"/>',
+      facets:'<line class="rankup-gem-facet" x1="50" y1="50" x2="50" y2="5"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="50" x2="90" y2="29"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="50" x2="90" y2="71"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="50" x2="50" y2="95"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="50" x2="10" y2="71"/>' +
+        '<line class="rankup-gem-facet" x1="50" y1="50" x2="10" y2="29"/>' },
+    { outline:'<ellipse class="rankup-gem-outline" cx="50" cy="50" rx="36" ry="46"/>',
+      facets:'<line class="rankup-gem-facet" x1="50" y1="6" x2="50" y2="94"/>' +
+        '<line class="rankup-gem-facet" x1="20" y1="30" x2="80" y2="70"/>' +
+        '<line class="rankup-gem-facet" x1="80" y1="30" x2="20" y2="70"/>' },
+    { outline:'<polygon class="rankup-gem-outline" points="50,2 66,50 50,98 34,50"/>',
+      facets:'<line class="rankup-gem-facet" x1="50" y1="2" x2="50" y2="98"/>' +
+        '<line class="rankup-gem-facet" x1="34" y1="50" x2="66" y2="50"/>' }
   ];
+  /* Same base silhouette across all 3 divisions of a rank (so it still
+     reads as "that gem"), but progressively more refined: division I is
+     the plain uncut outline, II adds the facet lines, III adds a
+     polished outer ring on top - a generic ring rather than a
+     per-shape one, so it works regardless of the outline's geometry. */
+  function buildBadgeSvg(rankIndex, divIndex){
+    var shape = RANK_SHAPES[rankIndex] || RANK_SHAPES[0];
+    var svg = shape.outline;
+    if (divIndex >= 1) svg += shape.facets;
+    if (divIndex >= 2) svg += '<circle class="rankup-gem-ring" cx="50" cy="50" r="48"/>';
+    return svg;
+  }
   function showRankUp(info){
     var stage = document.querySelector(".rankup-stage");
     var c = RANK_COLORS[info.rankIndex] || RANK_COLORS[0];
@@ -2010,7 +2033,7 @@ input[type="time"], input[type="date"], select{
     stage.style.setProperty("--rank-light", c.light);
     stage.style.setProperty("--rank-dark", c.dark);
     stage.classList.toggle("rankup-shift", info.rankName === "Alexandrite");
-    document.getElementById("rankUpBadge").innerHTML = RANK_SHAPES[info.rankIndex] || RANK_SHAPES[0];
+    document.getElementById("rankUpBadge").innerHTML = buildBadgeSvg(info.rankIndex, info.divIndex);
 
     document.getElementById("rankUpName").textContent = info.rankName;
     document.getElementById("rankUpDiv").textContent = info.divName;
@@ -2034,7 +2057,11 @@ input[type="time"], input[type="date"], select{
   });
   document.getElementById("previewRankUpBtn").addEventListener("click", function(){
     var idx = Number(document.getElementById("previewRankSelect").value);
-    showRankUp(getRankInfo(rankThresholds()[idx]));
+    var divIdx = Number(document.getElementById("previewDivSelect").value);
+    var thresholds = rankThresholds();
+    var rankStart = thresholds[idx], span = thresholds[idx + 1] - rankStart;
+    var previewElo = rankStart + (span * divIdx / DIVISIONS.length);
+    showRankUp(getRankInfo(previewElo));
   });
 
   function renderLog(){
