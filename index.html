@@ -1489,6 +1489,19 @@ input[type="time"], input[type="date"], select{
     for (var r = 0; r < RANKS.length; r++) thresholds.push(thresholds[r] + rankSpan(r));
     return thresholds;
   }
+  /* Cumulative fraction of a rank's span consumed by the END of each
+     division (division I smallest/easiest, III largest/hardest),
+     weighted the same growth-flavored way ranks are - so III costs
+     noticeably more than II, which costs more than I, inside every
+     single rank, without changing that rank's total span. */
+  function divisionCumulative(){
+    var weights = [];
+    for (var d = 0; d < DIVISIONS.length; d++) weights.push(Math.pow(d + 1, 1.3));
+    var sum = weights.reduce(function(a, b){ return a + b; }, 0);
+    var cum = [0];
+    for (var d = 0; d < weights.length; d++) cum.push(cum[d] + weights[d] / sum);
+    return cum;
+  }
   function getRankInfo(elo){
     elo = Math.max(0, elo);
     var thresholds = rankThresholds();
@@ -1504,12 +1517,13 @@ input[type="time"], input[type="date"], select{
        be past a division's end while still labeled with that division
        and showing "0 ELO to next" - self-contradictory, and it meant
        checkRankUp never saw that division as its own tier at all. */
+    var divCum = divisionCumulative();
     var divIndex = 0;
     for (var d = 0; d < DIVISIONS.length; d++) {
-      if (elo >= rankStart + (span * d / DIVISIONS.length)) divIndex = d; else break;
+      if (elo >= rankStart + span * divCum[d]) divIndex = d; else break;
     }
-    var divStart = rankStart + (span * divIndex / DIVISIONS.length);
-    var divEnd = rankStart + (span * (divIndex + 1) / DIVISIONS.length);
+    var divStart = rankStart + span * divCum[divIndex];
+    var divEnd = rankStart + span * divCum[divIndex + 1];
     var isMax = isTopRank && divIndex === DIVISIONS.length - 1 && elo >= divEnd;
     return {
       elo: elo,
