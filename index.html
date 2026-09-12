@@ -1765,6 +1765,15 @@ input[type="time"], input[type="date"], select{
      has a chance to reconcile it against the real cloud value, clobbering
      real progress with whatever this device happened to have on disk. */
   var cloudReady = false;
+  /* True while re-fetching straight from the server after the tab comes
+     back from being hidden (see the visibilitychange handler below).
+     Guards tickElo the same way cloudReady guards sign-in: without it, a
+     tab that's been backgrounded for a while resumes ticking on whatever
+     stale active/eloPoints it had in memory from before it was hidden
+     (mobile browsers throttle timers and the Firestore listener's network
+     activity while hidden, so that memory can be well out of date) and
+     can push that stale value before the fresh server read lands. */
+  var resyncingAfterHidden = false;
   var unsubSessions = null, unsubMeta = null;
   try {
     firebase.initializeApp(firebaseConfig);
@@ -1898,6 +1907,30 @@ input[type="time"], input[type="date"], select{
   }
   document.getElementById("signInBtn").addEventListener("click", signIn);
   document.getElementById("signOutBtn").addEventListener("click", signOutUser);
+
+  /* A tab that's been hidden a while (phone screen off, app switched away)
+     can have a stale active/eloPoints in memory - mobile browsers throttle
+     both timers and the Firestore listener's network activity while
+     hidden, so neither tickElo's decay/gain math nor the live listener can
+     be trusted to have kept up. Rather than let it resume ticking on
+     whatever it last knew and push that, force a fresh server read the
+     moment it's visible again and only resume ticking from there. */
+  document.addEventListener("visibilitychange", function(){
+    if (document.visibilityState !== "visible" || !fbUser || !cloudReady) return;
+    resyncingAfterHidden = true;
+    userMetaDoc().get({ source: "server" }).then(function(doc){
+      if (!doc.exists) return;
+      var data = doc.data();
+      if (data.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), data.settings));
+      if ("active" in data) active = data.active || null;
+      if (typeof data.eloPoints === "number") eloPoints = data.eloPoints;
+      saveLocal();
+      renderAll();
+    }).catch(function(){}).then(function(){
+      lastEloTickAt = Date.now();
+      resyncingAfterHidden = false;
+    });
+  });
 
   /* ---------------- reward cues: haptics + sound hook ---------------- */
   function buzz(pattern){
@@ -2279,6 +2312,7 @@ input[type="time"], input[type="date"], select{
     });
   }
   function tickElo(now){
+    if (resyncingAfterHidden) return;
     var nowMs = now.getTime();
     var deltaSec = Math.min(300, Math.max(0, (nowMs - lastEloTickAt) / 1000));
     lastEloTickAt = nowMs;
