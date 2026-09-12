@@ -127,14 +127,19 @@ button{font-family:inherit;}
   padding-block:66px 8px;
 }
 .elo-card{
+  /* Defaults (Sapphire-ish blue); set inline per rank by JS, same
+     values as the rank-up screen's --rank-glow/--rank-dark. */
+  --rank-glow:58,130,190;
+  --rank-dark:#0B2233;
   background:var(--surface);
-  border:1px solid var(--line);
+  border:1px solid rgba(var(--rank-glow),0.4);
   border-radius:16px;
   padding:10px 16px 12px;
-  box-shadow:var(--shadow);
+  box-shadow:var(--shadow), 0 0 0 1px rgba(var(--rank-glow),0.12), 0 0 18px rgba(var(--rank-glow),0.22);
   display:flex;
   flex-direction:column;
   gap:7px;
+  transition:border-color .3s ease, box-shadow .3s ease;
 }
 .elo-top{display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .elo-rank{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
@@ -146,8 +151,8 @@ button{font-family:inherit;}
 .elo-div-pill{
   font-size:0.68rem;
   font-weight:600;
-  color:var(--accent-strong);
-  background:var(--accent-soft);
+  color:var(--rank-dark);
+  background:rgba(var(--rank-glow),0.18);
   padding:1px 7px;
   border-radius:999px;
 }
@@ -158,7 +163,7 @@ button{font-family:inherit;}
   font-weight:600;
   white-space:nowrap;
 }
-.elo-rate.gain{color:var(--accent);}
+.elo-rate.gain{color:var(--rank-dark);}
 .elo-rate.lose{color:var(--danger);}
 .elo-bar-track{
   height:7px;
@@ -171,7 +176,7 @@ button{font-family:inherit;}
   height:100%;
   border-radius:999px;
   width:0%;
-  background:var(--accent);
+  background:var(--rank-dark);
   transition:width .4s ease, background .3s ease;
 }
 .elo-bar-fill.lose{background:var(--danger);}
@@ -1927,6 +1932,11 @@ input[type="time"], input[type="date"], select{
     var info = getRankInfo(eloPoints);
     var rate = currentEloRatePerMinute(new Date());
     var gaining = rate > 0;
+
+    var c = RANK_COLORS[info.rankIndex] || RANK_COLORS[0];
+    var eloCard = document.querySelector(".elo-card");
+    eloCard.style.setProperty("--rank-glow", c.glow);
+    eloCard.style.setProperty("--rank-dark", c.dark);
 
     els.eloRankName.textContent = info.rankName;
     els.eloDivName.textContent = info.isMax ? "MAX" : info.divName;
