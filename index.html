@@ -1251,7 +1251,7 @@ input[type="time"], input[type="date"], select{
 
     <section class="panel-section">
       <h3>Sounds</h3>
-      <p class="hint">Pick a short clip to play when you start or end a chunk. Stored only on this device.</p>
+      <p class="hint">Pick a short clip to play when you start or end a chunk, or rank up. Synced to your other devices when signed in (takes a moment, since audio is bigger than everything else that syncs) - stays on this device only if you're signed out.</p>
 
       <div class="sound-row">
         <div class="sound-row-label">
@@ -1425,6 +1425,7 @@ input[type="time"], input[type="date"], select{
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
 <script>
 (function(){
   "use strict";
@@ -1642,17 +1643,19 @@ input[type="time"], input[type="date"], select{
     messagingSenderId: "1028922551329",
     appId: "1:1028922551329:web:0db73ad6055b5e3dfd8760"
   };
-  var auth = null, db = null, fbUser = null;
+  var auth = null, db = null, storage = null, fbUser = null;
   var unsubSessions = null, unsubMeta = null;
   try {
     firebase.initializeApp(firebaseConfig);
     auth = firebase.auth();
     db = firebase.firestore();
     db.enablePersistence({ synchronizeTabs: true }).catch(function(){});
+    storage = firebase.storage();
   } catch (e) { /* SDK blocked or unavailable - app still works locally */ }
 
   function userSessionsCol(){ return db.collection("users").doc(fbUser.uid).collection("sessions"); }
   function userMetaDoc(){ return db.collection("users").doc(fbUser.uid).collection("meta").doc("state"); }
+  function userSoundRef(type){ return storage.ref("sounds/" + fbUser.uid + "/" + type); }
 
   /* Union by id - a chunk on either side survives. Used for the one-time
      local <-> cloud merge on first sign-in. */
@@ -1748,7 +1751,7 @@ input[type="time"], input[type="date"], select{
       detachCloud();
       fbUser = user;
       renderAccountStatus();
-      if (user) migrateAndAttach();
+      if (user) { migrateAndAttach(); syncAllSoundsWithCloud(); }
     });
     auth.getRedirectResult().then(function(result){
       if (result && result.user) showToast("Signed in as " + (result.user.email || "your account"));
@@ -1790,12 +1793,19 @@ input[type="time"], input[type="date"], select{
       req.onerror = function(){ reject(req.error); };
     });
   }
-  function saveSoundBlob(type, blob){
+  /* Stored as {blob, updatedAt} so cloud sync can tell which side (this
+     device or another one) has the newer pick; updatedAt also doubles
+     as the Storage object's customMetadata so a fresh device can
+     compare without downloading the file first. Sounds saved before
+     this existed are a bare Blob - normalizeSoundRecord treats those
+     as updatedAt:0, so a real cloud copy always wins over them. */
+  function saveSoundBlob(type, blob, updatedAt){
+    updatedAt = updatedAt || Date.now();
     return openSoundDb().then(function(db){
       return new Promise(function(resolve, reject){
         var tx = db.transaction(SOUND_STORE, "readwrite");
-        tx.objectStore(SOUND_STORE).put(blob, type);
-        tx.oncomplete = function(){ delete soundAudioCache[type]; resolve(); };
+        tx.objectStore(SOUND_STORE).put({ blob: blob, updatedAt: updatedAt }, type);
+        tx.oncomplete = function(){ delete soundAudioCache[type]; resolve(updatedAt); };
         tx.onerror = function(){ reject(tx.error); };
       });
     });
@@ -1810,7 +1820,7 @@ input[type="time"], input[type="date"], select{
       });
     });
   }
-  function loadSoundBlob(type){
+  function loadSoundRecord(type){
     return openSoundDb().then(function(db){
       return new Promise(function(resolve, reject){
         var tx = db.transaction(SOUND_STORE, "readonly");
@@ -1820,8 +1830,20 @@ input[type="time"], input[type="date"], select{
       });
     });
   }
-  /* type is "start" or "complete". No-ops (silently) if nothing has been
-     picked for that type yet, or IndexedDB isn't available. */
+  function normalizeSoundRecord(rec){
+    if (!rec) return null;
+    if (rec instanceof Blob) return { blob: rec, updatedAt: 0 };
+    return rec;
+  }
+  function loadSoundBlob(type){
+    return loadSoundRecord(type).then(function(rec){
+      rec = normalizeSoundRecord(rec);
+      return rec ? rec.blob : null;
+    });
+  }
+  /* type is "start", "complete", "rankup", or "rankupShine". No-ops
+     (silently) if nothing has been picked for that type yet, or
+     IndexedDB isn't available. */
   function playSound(type){
     if (soundAudioCache[type]) {
       soundAudioCache[type].currentTime = 0;
@@ -1834,6 +1856,49 @@ input[type="time"], input[type="date"], select{
       soundAudioCache[type] = audio;
       audio.play().catch(function(){});
     }).catch(function(){});
+  }
+
+  /* ---------------- sound cloud sync (per type, last-writer-wins by updatedAt) ---------------- */
+  function pushSoundToCloud(type, blob, updatedAt){
+    if (!fbUser || !storage) return Promise.resolve();
+    return userSoundRef(type).put(blob, {
+      contentType: blob.type || "audio/mpeg",
+      customMetadata: { updatedAt: String(updatedAt) }
+    }).catch(function(err){ console.error("Sound upload failed (" + type + "):", err); });
+  }
+  function pullSoundFromCloud(type, updatedAt){
+    return userSoundRef(type).getDownloadURL()
+      .then(function(url){ return fetch(url); })
+      .then(function(r){ return r.blob(); })
+      .then(function(blob){ return saveSoundBlob(type, blob, updatedAt); });
+  }
+  function syncSoundWithCloud(type){
+    if (!fbUser || !storage) return;
+    Promise.all([
+      loadSoundRecord(type).then(normalizeSoundRecord),
+      userSoundRef(type).getMetadata().catch(function(){ return null; })
+    ]).then(function(results){
+      var local = results[0];
+      var remoteMeta = results[1];
+      if (!local && !remoteMeta) return;
+      var remoteUpdatedAt = (remoteMeta && remoteMeta.customMetadata && remoteMeta.customMetadata.updatedAt)
+        ? Number(remoteMeta.customMetadata.updatedAt) : 0;
+      var localUpdatedAt = local ? local.updatedAt : 0;
+      if (localUpdatedAt > remoteUpdatedAt) {
+        return pushSoundToCloud(type, local.blob, localUpdatedAt);
+      }
+      if (remoteUpdatedAt > localUpdatedAt) {
+        return pullSoundFromCloud(type, remoteUpdatedAt).then(refreshAllSoundStatuses);
+      }
+    }).catch(function(err){ console.error("Sound sync failed (" + type + "):", err); });
+  }
+  var SOUND_TYPES = ["start", "complete", "rankup", "rankupShine"];
+  function syncAllSoundsWithCloud(){ SOUND_TYPES.forEach(syncSoundWithCloud); }
+  function refreshAllSoundStatuses(){
+    refreshStartSoundStatus();
+    refreshCompleteSoundStatus();
+    refreshRankupSoundStatus();
+    refreshRankupShineSoundStatus();
   }
 
   function setupSoundPicker(type, fileId, statusId, playId, clearId){
@@ -1850,10 +1915,19 @@ input[type="time"], input[type="date"], select{
       var file = fileInput.files && fileInput.files[0];
       fileInput.value = "";
       if (!file) return;
-      saveSoundBlob(type, file).then(refreshStatus);
+      var updatedAt = Date.now();
+      saveSoundBlob(type, file, updatedAt).then(function(){
+        refreshStatus();
+        pushSoundToCloud(type, file, updatedAt);
+      });
     });
     document.getElementById(playId).addEventListener("click", function(){ playSound(type); });
-    document.getElementById(clearId).addEventListener("click", function(){ deleteSoundBlob(type).then(refreshStatus); });
+    document.getElementById(clearId).addEventListener("click", function(){
+      deleteSoundBlob(type).then(function(){
+        refreshStatus();
+        if (fbUser && storage) userSoundRef(type).delete().catch(function(){});
+      });
+    });
 
     refreshStatus();
     return refreshStatus;
