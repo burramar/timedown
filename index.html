@@ -1707,8 +1707,25 @@ input[type="time"], input[type="date"], select{
   var sessions = [];
   var active = null;
   var eloPoints = 0;
+  /* eloPoints is only meaningful together with the instant it was last
+     settled as of - lastEloTickAt is that instant (ms epoch locally,
+     synced as the ISO string eloPointsAt). Every sync touchpoint below
+     compares THIS before ever adopting a fetched eloPoints, and only
+     adopts the fetch if it's the newer of the two: a number alone can't
+     say whose progress is more complete (decay legitimately goes down,
+     so "bigger" isn't "newer"), but a checkpoint time can be compared
+     unambiguously, and that's what actually decides which device's write
+     should win instead of whichever happened to push last. */
   var lastEloTickAt = Date.now();
   var lastEloPushAt = 0;
+  /* Once true, this browser's eloPoints/lastEloTickAt is just a cache of
+     the shared cloud checkpoint and cold starts should compare it by
+     recency (above). Before the first successful link, eloPoints may
+     instead hold this device's own pre-sign-in history with no shared
+     checkpoint to compare against yet - recency is meaningless there, so
+     that one time only, migrateAndAttach folds it in via Math.max instead
+     (see there for why max, not sum, is the right one-time merge). */
+  var eloLinked = false;
 
   /* One-time upgrade from the old single-commitment shape (doubleWindow
      carrying its own startAt/endAt) to the new array (doubleWindows) -
@@ -1728,7 +1745,7 @@ input[type="time"], input[type="date"], select{
     try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch(e){ return {}; }
   }
   function saveLocal(){
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: settings, sessions: sessions, active: active, eloPoints: eloPoints })); } catch(e){}
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: settings, sessions: sessions, active: active, eloPoints: eloPoints, eloPointsAt: new Date(lastEloTickAt).toISOString(), eloLinked: eloLinked })); } catch(e){}
   }
   (function bootLocal(){
     var l = loadLocal();
@@ -1736,6 +1753,8 @@ input[type="time"], input[type="date"], select{
     if (l.sessions) sessions = l.sessions;
     if (l.active) active = l.active;
     if (typeof l.eloPoints === "number") eloPoints = l.eloPoints;
+    if (l.eloPointsAt) lastEloTickAt = new Date(l.eloPointsAt).getTime();
+    if (l.eloLinked) eloLinked = true;
   })();
 
   /* Sessions already on disk at boot don't replay the day-bar "new chunk"
@@ -1804,12 +1823,10 @@ input[type="time"], input[type="date"], select{
      Firestore cache (metadata.fromCache = true) before the server has had a
      chance to weigh in, then fires again once it does. On a device that
      hasn't synced in a while, that first, cache-only event can be older than
-     what migrateAndAttach just reconciled moments earlier - and unlike that
-     one-time merge, this ongoing listener has no way to compare "older vs
-     newer" (ELO legitimately goes down too, via decay, so it can't just take
-     the max). Skipping fromCache events means only server-confirmed data
-     ever overwrites live state, at the cost of not live-updating while
-     offline - a fair trade against silently regressing real progress. */
+     what migrateAndAttach just reconciled moments earlier. Skipping
+     fromCache events means only server-confirmed data ever reaches
+     adoptEloCheckpoint, at the cost of not live-updating while offline -
+     a fair trade against acting on a guess. */
   function attachCloud(){
     unsubSessions = userSessionsCol().onSnapshot(function(snap){
       if (snap.metadata.fromCache) return;
@@ -1823,7 +1840,7 @@ input[type="time"], input[type="date"], select{
       var data = doc.data();
       if (data.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), data.settings));
       if ("active" in data) active = data.active || null;
-      if (typeof data.eloPoints === "number") eloPoints = data.eloPoints;
+      adoptEloCheckpoint(data);
       saveLocal();
       renderAll();
     }, function(){});
@@ -1831,21 +1848,41 @@ input[type="time"], input[type="date"], select{
   /* A plain .get() with persistence enabled (enablePersistence above) can
      resolve straight from this device's own local IndexedDB cache instead
      of reaching the server - especially right at startup, before the
-     backend stream is even connected. For migrateAndAttach that's fatal:
-     it'd read back exactly what this device last wrote, "merge" stale
-     against stale, and then commit that straight over whatever a newer
-     write from another device already put on the server. Forcing a server
-     read here (falling back to cache only if actually offline) is what
-     makes that merge mean anything. */
+     backend stream is even connected. Forcing a server read here (falling
+     back to cache only if actually offline) keeps that first read honest;
+     adoptEloCheckpoint below is what actually makes it safe even if a
+     stale read slips through anyway. */
   function freshGet(ref){
     return ref.get({ source: "server" }).catch(function(){ return ref.get(); });
   }
+  /* eloPoints only means something alongside the instant it's accurate as
+     of (lastEloTickAt locally, synced as the ISO string eloPointsAt) - a
+     bare number can't say whose progress is more complete, since decay
+     legitimately brings it down too, so "bigger" isn't "newer". This is
+     the one place a fetched eloPoints is allowed to overwrite the local
+     value, and only when its checkpoint is actually newer, which is what
+     makes it safe regardless of which device pushed last, whether a read
+     came from cache or server, or how long a tab sat backgrounded. A
+     missing eloPointsAt (a doc written before this checkpoint existed)
+     is treated as "now" so old-format cloud data is trusted once, then
+     naturally superseded by real checkpoints from here on. */
+  function adoptEloCheckpoint(data){
+    if (typeof data.eloPoints !== "number") return;
+    var incomingAt = data.eloPointsAt ? new Date(data.eloPointsAt).getTime() : Date.now();
+    if (incomingAt <= lastEloTickAt) return;
+    eloPoints = data.eloPoints;
+    lastEloTickAt = incomingAt;
+  }
   /* One-time on sign-in: combine whatever's local with whatever's already
      in the cloud so neither side loses chunks, push the merged result
-     back up, then attach live listeners for everything after. ELO is a
-     single running number rather than a list, so it can't be unioned like
-     chunks - taking the higher of the two avoids the sign-in accidentally
-     rolling progress backward either way. */
+     back up, then attach live listeners for everything after. Sessions
+     union by id so nothing is lost either way. ELO can't be unioned like
+     that - it's a single number - and on a device's very first link there's
+     no shared checkpoint history to compare recency against yet (eloLinked
+     is still false), so this one time only, take the higher of the two
+     independent totals rather than either fully replacing the other; every
+     app open after that is a shared checkpoint and adoptEloCheckpoint's
+     recency check takes over instead. */
   function migrateAndAttach(){
     Promise.all([ freshGet(userSessionsCol()), freshGet(userMetaDoc()) ]).then(function(results){
       var cloudSessions = results[0].docs.map(function(d){ return d.data(); });
@@ -1854,7 +1891,15 @@ input[type="time"], input[type="date"], select{
       sessions = mergeSessionsById(sessions, cloudSessions);
       if (cloudMeta && cloudMeta.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), cloudMeta.settings));
       if (cloudMeta && "active" in cloudMeta) active = cloudMeta.active || active || null;
-      if (cloudMeta && typeof cloudMeta.eloPoints === "number") eloPoints = Math.max(eloPoints, cloudMeta.eloPoints);
+      if (cloudMeta && typeof cloudMeta.eloPoints === "number") {
+        if (eloLinked) {
+          adoptEloCheckpoint(cloudMeta);
+        } else if (cloudMeta.eloPoints > eloPoints) {
+          eloPoints = cloudMeta.eloPoints;
+          lastEloTickAt = cloudMeta.eloPointsAt ? new Date(cloudMeta.eloPointsAt).getTime() : Date.now();
+        }
+      }
+      eloLinked = true;
 
       animatedChunkIds = {};
       sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
@@ -1863,7 +1908,7 @@ input[type="time"], input[type="date"], select{
 
       var batch = db.batch();
       sessions.forEach(function(s){ batch.set(userSessionsCol().doc(s.id), s); });
-      batch.set(userMetaDoc(), { settings: settings, active: active, eloPoints: eloPoints }, { merge: true });
+      batch.set(userMetaDoc(), { settings: settings, active: active, eloPoints: eloPoints, eloPointsAt: new Date(lastEloTickAt).toISOString() }, { merge: true });
       return batch.commit();
     }).catch(function(){}).then(function(){
       cloudReady = true;
@@ -1926,7 +1971,12 @@ input[type="time"], input[type="date"], select{
      hidden, so neither tickElo's decay/gain math nor the live listener can
      be trusted to have kept up. Rather than let it resume ticking on
      whatever it last knew and push that, force a fresh server read the
-     moment it's visible again and only resume ticking from there. */
+     moment it's visible again and only resume ticking from there.
+     adoptEloCheckpoint (not a raw overwrite) decides whether that read is
+     actually newer than what's already local - lastEloTickAt is NOT reset
+     to "now" here, since that's exactly what would make a stale read look
+     newest going forward; adoptEloCheckpoint already sets it correctly
+     (to the checkpoint's own timestamp) whenever it does adopt. */
   document.addEventListener("visibilitychange", function(){
     if (document.visibilityState !== "visible" || !fbUser || !cloudReady) return;
     resyncingAfterHidden = true;
@@ -1935,11 +1985,10 @@ input[type="time"], input[type="date"], select{
       var data = doc.data();
       if (data.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), data.settings));
       if ("active" in data) active = data.active || null;
-      if (typeof data.eloPoints === "number") eloPoints = data.eloPoints;
+      adoptEloCheckpoint(data);
       saveLocal();
       renderAll();
     }).catch(function(){}).then(function(){
-      lastEloTickAt = Date.now();
       resyncingAfterHidden = false;
     });
   });
@@ -2307,22 +2356,25 @@ input[type="time"], input[type="date"], select{
     tickElo(now);
   }
 
+  /* Pushes eloPoints to Firestore right now, bypassing the tick
+     throttle - used at chunk start/end so the moments you'd actually
+     go check another device don't have to wait out the timer. Sends
+     eloPointsAt alongside it (see adoptEloCheckpoint) so whichever device
+     reads this later can tell whether it's actually newer than what it
+     already has. Logs failures instead of swallowing them, so a sync
+     problem is at least visible in the console rather than silently
+     invisible. */
+  function pushEloNow(){
+    if (!fbUser || !cloudReady) return;
+    lastEloPushAt = Date.now();
+    userMetaDoc().set({ eloPoints: eloPoints, eloPointsAt: new Date(lastEloTickAt).toISOString() }, { merge: true }).catch(function(err){
+      console.error("ELO sync failed:", err);
+    });
+  }
   /* Advances ELO by whatever's elapsed since the last tick at the current
      rate. Uses a real wall-clock delta (not a fixed 1s assumption) so a
      throttled/backgrounded tab still catches up correctly, capped at 5
      minutes per tick so a long-suspended tab can't cause a huge swing. */
-  /* Pushes eloPoints to Firestore right now, bypassing the tick
-     throttle - used at chunk start/end so the moments you'd actually
-     go check another device don't have to wait out the timer. Logs
-     failures instead of swallowing them, so a sync problem is at
-     least visible in the console rather than silently invisible. */
-  function pushEloNow(){
-    if (!fbUser || !cloudReady) return;
-    lastEloPushAt = Date.now();
-    userMetaDoc().set({ eloPoints: eloPoints }, { merge: true }).catch(function(err){
-      console.error("ELO sync failed:", err);
-    });
-  }
   function tickElo(now){
     /* A hidden tab isn't stopped, just throttled - setInterval(tick) keeps
        firing (if less often), so without this it would keep computing
