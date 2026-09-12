@@ -2023,6 +2023,18 @@ input[type="time"], input[type="date"], select{
      rate. Uses a real wall-clock delta (not a fixed 1s assumption) so a
      throttled/backgrounded tab still catches up correctly, capped at 5
      minutes per tick so a long-suspended tab can't cause a huge swing. */
+  /* Pushes eloPoints to Firestore right now, bypassing the tick
+     throttle - used at chunk start/end so the moments you'd actually
+     go check another device don't have to wait out the timer. Logs
+     failures instead of swallowing them, so a sync problem is at
+     least visible in the console rather than silently invisible. */
+  function pushEloNow(){
+    if (!fbUser) return;
+    lastEloPushAt = Date.now();
+    userMetaDoc().set({ eloPoints: eloPoints }, { merge: true }).catch(function(err){
+      console.error("ELO sync failed:", err);
+    });
+  }
   function tickElo(now){
     var nowMs = now.getTime();
     var deltaSec = Math.min(300, Math.max(0, (nowMs - lastEloTickAt) / 1000));
@@ -2033,10 +2045,7 @@ input[type="time"], input[type="date"], select{
       saveLocal();
     }
     renderEloMeter();
-    if (fbUser && nowMs - lastEloPushAt > 20000) {
-      lastEloPushAt = nowMs;
-      userMetaDoc().set({ eloPoints: eloPoints }, { merge: true }).catch(function(){});
-    }
+    if (fbUser && nowMs - lastEloPushAt > 8000) pushEloNow();
   }
 
   function renderToggle(){
@@ -2442,6 +2451,7 @@ input[type="time"], input[type="date"], select{
       playSound("start");
       buzz(15);
       renderAll();
+      pushEloNow();
     } else {
       openJournal();
     }
@@ -2541,6 +2551,7 @@ input[type="time"], input[type="date"], select{
     buzz([15,40,25]);
     closeJournal();
     renderAll();
+    pushEloNow();
     flashAchievement();
     showToast(todayStatText());
     if (pendingRankUp) {
