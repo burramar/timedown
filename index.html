@@ -1851,10 +1851,23 @@ input[type="time"], input[type="date"], select{
       return;
     }
     loadSoundBlob(type).then(function(blob){
-      if (!blob) return;
-      var audio = new Audio(URL.createObjectURL(blob));
-      soundAudioCache[type] = audio;
-      audio.play().catch(function(){});
+      if (blob) {
+        var audio = new Audio(URL.createObjectURL(blob));
+        soundAudioCache[type] = audio;
+        audio.play().catch(function(){});
+        return;
+      }
+      /* No local copy yet - if signed in, stream straight from the
+         cloud URL instead of waiting on the background fetch-and-cache
+         sync. A plain <audio src> load doesn't need CORS the way a
+         fetch() does, so this works even if that background sync is
+         failing silently for some CORS/permissions reason. */
+      if (!fbUser || !storage) return;
+      userSoundRef(type).getDownloadURL().then(function(url){
+        var audio = new Audio(url);
+        soundAudioCache[type] = audio;
+        audio.play().catch(function(){});
+      }).catch(function(){});
     }).catch(function(){});
   }
 
@@ -1910,7 +1923,17 @@ input[type="time"], input[type="date"], select{
 
     function refreshStatus(){
       loadSoundBlob(type).then(function(blob){
-        statusEl.textContent = blob ? "Custom sound set" : "None set";
+        if (blob) { statusEl.textContent = "Custom sound set"; return; }
+        /* Nothing cached locally yet - check the cloud directly too,
+           so the status is right even if the background sync (which
+           downloads and caches the actual file) hasn't finished or is
+           failing for some reason. This only checks existence
+           (getMetadata), not the CORS-sensitive fetch the full cache
+           step uses. */
+        if (!fbUser || !storage) { statusEl.textContent = "None set"; return; }
+        userSoundRef(type).getMetadata().then(function(){
+          statusEl.textContent = "Custom sound set (from cloud)";
+        }).catch(function(){ statusEl.textContent = "None set"; });
       }).catch(function(){ statusEl.textContent = "None set"; });
     }
 
