@@ -74,31 +74,23 @@ button{font-family:inherit;}
   display:flex;
   gap:8px;
 }
-/* ---------- Theme toggle "paint spill" transition ----------
-   Uses the native View Transitions API so the circle wipe reveals the
-   real, already-re-themed page underneath rather than a fake solid-color
-   overlay - the actual UI recolors as the circle passes over it. The two
-   pseudo-elements are the browser's own before/after snapshots of <html>;
-   disabling their default cross-fade and stacking new-on-top-of-old is
-   what turns the built-in fade into an iris wipe instead. */
-::view-transition-group(root){
-  animation-duration:0s;
-}
-::view-transition-old(root), ::view-transition-new(root){
-  animation:none;
-  mix-blend-mode:normal;
-  will-change:clip-path;
-}
-::view-transition-old(root){ z-index:1; }
-::view-transition-new(root){ z-index:2; }
-.theme-splatter{
-  position:fixed;
-  border-radius:50%;
-  pointer-events:none;
-  z-index:61;
+/* ---------- Theme toggle: smooth color cross-fade ----------
+   No snapshots, no masking - just letting every element's own colors
+   transition is the cheapest possible way to animate a theme switch, and
+   it means the UI genuinely recolors in place rather than being covered
+   and revealed. Scoped to color-ish properties only so it never touches
+   the width/transform/opacity animations used elsewhere (chunk fill bar,
+   badges, toasts, etc). */
+*, *::before, *::after{
+  transition:background-color .45s ease, color .45s ease, border-color .45s ease,
+             box-shadow .45s ease, fill .45s ease, stroke .45s ease;
 }
 @media (prefers-reduced-motion: reduce){
-  .theme-splatter{display:none;}
+  /* No !important - same specificity as the rule above so it wins for
+     plain elements, but a component's own more specific transition (the
+     icon buttons' hover fade, the chunk-fill bar's width, etc.) still
+     takes precedence and is left alone. */
+  *, *::before, *::after{ transition:none; }
 }
 .icon-btn{
   position:relative;
@@ -1754,20 +1746,12 @@ input[type="time"], input[type="date"], select{
      the max). Skipping fromCache events means only server-confirmed data
      ever overwrites live state, at the cost of not live-updating while
      offline - a fair trade against silently regressing real progress. */
-  /* A sync event landing mid-wipe would force the same kind of heavy
-     re-render tick() is already barred from doing during the transition -
-     defer it instead of dropping it, and flush once the wipe settles. */
-  var themeTransitionPendingRender = false;
-  function renderAllUnlessMidWipe(){
-    if (activeThemeTransition) { themeTransitionPendingRender = true; return; }
-    renderAll();
-  }
   function attachCloud(){
     unsubSessions = userSessionsCol().onSnapshot(function(snap){
       if (snap.metadata.fromCache) return;
       sessions = snap.docs.map(function(d){ return d.data(); });
       saveLocal();
-      renderAllUnlessMidWipe();
+      renderAll();
     }, function(){});
     unsubMeta = userMetaDoc().onSnapshot(function(doc){
       if (doc.metadata.fromCache) return;
@@ -1777,7 +1761,7 @@ input[type="time"], input[type="date"], select{
       if ("active" in data) active = data.active || null;
       if (typeof data.eloPoints === "number") eloPoints = data.eloPoints;
       saveLocal();
-      renderAllUnlessMidWipe();
+      renderAll();
     }, function(){});
   }
   /* One-time on sign-in: combine whatever's local with whatever's already
@@ -2196,11 +2180,6 @@ input[type="time"], input[type="date"], select{
   }
 
   function tick(){
-    // Skip this beat entirely while the theme wipe is playing - its per-frame
-    // clip-path mask work is competing for the same main thread, and a
-    // full day-bar/ELO/countdown re-render landing mid-wipe is exactly what
-    // turns a smooth animation into a stall-then-snap.
-    if (activeThemeTransition) return;
     var now = new Date();
     var inWindow = isInDoubleWindow(now, settings);
     document.body.classList.toggle("double-bonus", !!active && inWindow);
@@ -3021,85 +3000,13 @@ input[type="time"], input[type="date"], select{
   }
   applyThemeIcons(currentTheme());
 
-  function spawnPaintSplatter(x, y, color){
-    var count = 6;
-    for (var i = 0; i < count; i++) {
-      var d = document.createElement("div");
-      d.className = "theme-splatter";
-      var angle = Math.random() * Math.PI * 2;
-      var dist = 24 + Math.random() * 90;
-      var dx = Math.cos(angle) * dist, dy = Math.sin(angle) * dist;
-      var size = 5 + Math.random() * 11;
-      d.style.left = x + "px";
-      d.style.top = y + "px";
-      d.style.width = size + "px";
-      d.style.height = size + "px";
-      d.style.background = color;
-      d.style.transform = "translate(-50%,-50%) scale(0)";
-      document.body.appendChild(d);
-      (function(el, dx, dy){
-        var anim = el.animate([
-          { transform: "translate(-50%,-50%) translate(0px,0px) scale(0)", opacity: 1 },
-          { transform: "translate(-50%,-50%) translate(" + (dx*0.6) + "px," + (dy*0.6) + "px) scale(1)", opacity: 1, offset: 0.35 },
-          { transform: "translate(-50%,-50%) translate(" + dx + "px," + dy + "px) scale(.7)", opacity: 0 }
-        ], { duration: 600 + Math.random() * 300, easing: "cubic-bezier(.2,.8,.3,1)" });
-        anim.onfinish = function(){ el.remove(); };
-      })(d, dx, dy);
-    }
-  }
-
-  var activeThemeTransition = null;
-
-  function toggleTheme(originX, originY){
+  function toggleTheme(){
     var next = currentTheme() === "dark" ? "light" : "dark";
-    var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-    if (reduceMotion || typeof document.startViewTransition !== "function") {
-      setThemeAttr(next);
-      renderAll();
-      return;
-    }
-
-    // A fast second click while one wipe is still running would otherwise queue
-    // up behind it - skip straight to the end state first so it can never stall.
-    if (activeThemeTransition) { try { activeThemeTransition.skipTransition(); } catch(e){} }
-
-    var maxR = Math.hypot(
-      Math.max(originX, window.innerWidth - originX),
-      Math.max(originY, window.innerHeight - originY)
-    ) * 1.05;
-
-    var transition = document.startViewTransition(function(){
-      setThemeAttr(next);
-      renderAll();
-    });
-    activeThemeTransition = transition;
-
-    transition.ready.then(function(){
-      document.documentElement.animate(
-        { clipPath: [
-            "circle(0px at " + originX + "px " + originY + "px)",
-            "circle(" + maxR + "px at " + originX + "px " + originY + "px)"
-          ] },
-        { duration: 550, easing: "cubic-bezier(.35,0,.15,1)", fill: "forwards", pseudoElement: "::view-transition-new(root)" }
-      );
-    }).catch(function(){});
-
-    // The real page (including any DOM we touch here) is hidden behind the
-    // transition's own before/after snapshots while it plays, so the splatter
-    // flourish is queued for right as the wipe settles rather than fired at
-    // click time, where it'd just get baked motionless into those snapshots.
-    transition.finished.then(function(){
-      if (activeThemeTransition === transition) activeThemeTransition = null;
-      if (themeTransitionPendingRender) { themeTransitionPendingRender = false; renderAll(); }
-      spawnPaintSplatter(originX, originY, next === "dark" ? "#17160F" : "#FAFAF6");
-    });
+    setThemeAttr(next);
+    renderAll();
   }
 
-  themeToggleBtn.addEventListener("click", function(){
-    var rect = themeToggleBtn.getBoundingClientRect();
-    toggleTheme(rect.left + rect.width / 2, rect.top + rect.height / 2);
-  });
+  themeToggleBtn.addEventListener("click", toggleTheme);
 
   /* ---------------- boot ---------------- */
   renderAll();
