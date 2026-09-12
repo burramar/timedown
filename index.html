@@ -1519,6 +1519,7 @@ input[type="time"], input[type="date"], select{
   function parseHM(str){ var p = (str||"00:00").split(":"); return { h: Number(p[0])||0, m: Number(p[1])||0 }; }
   function combine(date, hm){ var d = new Date(date); d.setHours(hm.h, hm.m, 0, 0); return d; }
   function addDays(date, n){ var d = new Date(date); d.setDate(d.getDate()+n); return d; }
+  function hmValue(date){ return pad(date.getHours()) + ":" + pad(date.getMinutes()); }
   function dateKey(d){ var x = new Date(d); return x.getFullYear()+"-"+pad(x.getMonth()+1)+"-"+pad(x.getDate()); }
   function fmtTime(hm){
     var h = hm.h % 12; if (h===0) h = 12;
@@ -2734,8 +2735,9 @@ input[type="time"], input[type="date"], select{
     document.getElementById("doubleWindowToggle").setAttribute("aria-expanded", doubleWindowPanelOpen ? "true" : "false");
     document.getElementById("doubleWindowPanel").classList.toggle("open", doubleWindowPanelOpen);
     if (doubleWindowPanelOpen && !pendingDoubleWindow(settings)) {
-      document.getElementById("dwStart").value = settings.doubleWindow.start;
-      document.getElementById("dwEnd").value = settings.doubleWindow.end;
+      var now = new Date();
+      document.getElementById("dwStart").value = hmValue(now);
+      document.getElementById("dwEnd").value = hmValue(new Date(now.getTime() + 50*60*1000));
     }
   }
   document.getElementById("doubleWindowToggle").addEventListener("click", toggleDoubleWindowPanel);
