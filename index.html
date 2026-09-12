@@ -2755,6 +2755,10 @@ input[type="time"], input[type="date"], select{
     refreshRankupSoundStatus();
     refreshRankupShineSoundStatus();
     renderAccountStatus();
+    /* Re-check the cloud every time Settings opens, not just at sign-in
+       - otherwise a tab left open from before a change was made on
+       another device would never see it without a full page reload. */
+    if (fbUser) syncAllSoundsWithCloud();
     settingsOverlay.hidden = false;
   }
   function closeSettings(){ settingsOverlay.hidden = true; }
