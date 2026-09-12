@@ -509,6 +509,58 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
 .field-error{font-size:0.78rem;color:var(--danger);margin:-6px 0 0;display:none;}
 .field-error.show{display:block;}
 
+/* ---------- Rank-up celebration ---------- */
+.rankup-overlay{z-index:45;}
+.rankup-modal{
+  position:relative;
+  overflow:hidden;
+  align-items:center;
+  text-align:center;
+  gap:12px;
+  padding:34px 26px 26px;
+  animation:rankupPop .4s cubic-bezier(.2,.9,.3,1.2);
+}
+.rankup-glow{
+  position:absolute;
+  inset:-30%;
+  background:radial-gradient(circle at 50% 38%, rgba(var(--accent-rgb),0.4) 0%, rgba(var(--accent-rgb),0) 60%);
+  pointer-events:none;
+  animation:rankupGlow 1.6s ease-out;
+}
+.rankup-label{
+  position:relative;
+  margin:0;
+  font-size:0.78rem;
+  font-weight:700;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--accent-strong);
+}
+.rankup-rank{position:relative;display:flex;align-items:baseline;justify-content:center;gap:10px;flex-wrap:wrap;}
+.rankup-rank-name{font-size:clamp(2rem, 9vw, 2.6rem);font-weight:700;color:var(--ink);}
+.rankup-div-pill{
+  font-size:1rem;
+  font-weight:700;
+  color:var(--accent-strong);
+  background:var(--accent-soft);
+  padding:4px 14px;
+  border-radius:999px;
+}
+.rankup-sub{position:relative;margin:0;font-size:0.86rem;color:var(--ink-soft);}
+@keyframes rankupPop{
+  0%{opacity:0;transform:scale(.92);}
+  100%{opacity:1;transform:scale(1);}
+}
+@keyframes rankupGlow{
+  0%{opacity:0;transform:scale(.7);}
+  30%{opacity:1;transform:scale(1);}
+  100%{opacity:.55;transform:scale(1.05);}
+}
+@media (prefers-reduced-motion: reduce){
+  .rankup-modal{animation:none;}
+  .rankup-glow{animation:none;opacity:.55;}
+}
+
 .btn-primary, .btn-ghost{
   border-radius:10px;
   padding:10px 16px;
@@ -843,6 +895,20 @@ input[type="time"], input[type="date"], select{
   </div>
 </div>
 
+<!-- Rank-up celebration -->
+<div class="overlay center rankup-overlay" id="rankUpOverlay" hidden>
+  <div class="modal rankup-modal">
+    <div class="rankup-glow" aria-hidden="true"></div>
+    <p class="rankup-label">Rank up</p>
+    <div class="rankup-rank">
+      <span class="rankup-rank-name" id="rankUpName">Copper</span>
+      <span class="rankup-div-pill" id="rankUpDiv">I</span>
+    </div>
+    <p class="rankup-sub" id="rankUpSub"></p>
+    <button class="btn-primary full" id="rankUpClose" type="button">Nice</button>
+  </div>
+</div>
+
 <!-- Settings drawer -->
 <div class="overlay drawer-wrap" id="settingsOverlay" hidden>
   <div class="drawer" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
@@ -1152,6 +1218,9 @@ input[type="time"], input[type="date"], select{
     var isMax = isTopRank && divIndex === DIVISIONS.length - 1 && elo >= divEnd;
     return {
       elo: elo,
+      rankIndex: rankIndex,
+      divIndex: divIndex,
+      tier: rankIndex * DIVISIONS.length + divIndex,
       rankName: RANKS[rankIndex],
       divName: DIVISIONS[divIndex],
       divStart: divStart,
@@ -1611,7 +1680,35 @@ input[type="time"], input[type="date"], select{
     els.eloBarFill.classList.toggle("lose", !gaining);
     els.eloPointsText.textContent = Math.round(info.elo) + " ELO";
     els.eloNextText.textContent = info.isMax ? "top rank" : (Math.ceil(info.pointsToNextDiv) + " to next");
+
+    checkRankUp(info);
   }
+
+  /* Fires the celebration only on a genuine increase seen live during
+     this page load - lastTier starts null so the very first render
+     (including right after loading someone else's synced progress)
+     just records the current tier instead of celebrating it. */
+  var lastTier = null;
+  function checkRankUp(info){
+    if (lastTier === null) { lastTier = info.tier; return; }
+    if (info.tier > lastTier) showRankUp(info);
+    lastTier = info.tier;
+  }
+  function showRankUp(info){
+    document.getElementById("rankUpName").textContent = info.rankName;
+    document.getElementById("rankUpDiv").textContent = info.divName;
+    document.getElementById("rankUpSub").textContent = info.isMax
+      ? "You've reached the top rank."
+      : Math.ceil(info.pointsToNextDiv) + " ELO to the next division.";
+    document.getElementById("rankUpOverlay").hidden = false;
+    playSound("rankup");
+    buzz([15,40,15,40,25]);
+  }
+  function closeRankUp(){ document.getElementById("rankUpOverlay").hidden = true; }
+  document.getElementById("rankUpClose").addEventListener("click", closeRankUp);
+  document.getElementById("rankUpOverlay").addEventListener("click", function(e){
+    if (e.target === document.getElementById("rankUpOverlay")) closeRankUp();
+  });
 
   function renderLog(){
     var now = new Date();
@@ -1989,6 +2086,7 @@ input[type="time"], input[type="date"], select{
 
   document.addEventListener("keydown", function(e){
     if (e.key !== "Escape") return;
+    if (!document.getElementById("rankUpOverlay").hidden) { closeRankUp(); return; }
     if (!confirmOverlay.hidden) { closeConfirm(false); return; }
     if (!journalOverlay.hidden) { closeJournal(); return; }
     if (!editOverlay.hidden) { closeEdit(); return; }
