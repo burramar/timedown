@@ -189,6 +189,7 @@ button{font-family:inherit;}
   gap:28px;
 }
 .card{
+  position:relative;
   background:var(--surface);
   border:1px solid var(--line);
   border-radius:22px;
@@ -197,6 +198,50 @@ button{font-family:inherit;}
   display:flex;
   flex-direction:column;
   gap:20px;
+}
+.double-window-toggle{
+  position:absolute;
+  top:-14px;
+  right:18px;
+  width:32px;height:32px;
+  border-radius:50%;
+  border:1px solid var(--line);
+  background:var(--surface);
+  color:var(--ink-faint);
+  font-family:"IBM Plex Mono", ui-monospace, monospace;
+  font-size:0.72rem;
+  font-weight:700;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;
+  box-shadow:var(--shadow);
+  transition:color .15s ease, border-color .15s ease, background .15s ease;
+  z-index:2;
+}
+.double-window-toggle.enabled{
+  color:var(--accent-strong);
+  border-color:var(--accent);
+  background:var(--accent-soft);
+}
+.double-window-panel{
+  margin-top:-20px;
+  max-height:0;
+  overflow:hidden;
+  opacity:0;
+  transition:max-height .35s ease, opacity .25s ease, margin-top .35s ease;
+}
+.double-window-panel.open{
+  margin-top:0;
+  max-height:280px;
+  opacity:1;
+}
+.double-window-panel-inner{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  padding-top:2px;
+}
+@media (prefers-reduced-motion: reduce){
+  .double-window-panel{transition:opacity .2s ease;}
 }
 
 .chunk-zone{
@@ -884,6 +929,8 @@ input[type="time"], input[type="date"], select{
 
 <div class="page">
   <div class="card" id="card">
+    <button class="double-window-toggle" id="doubleWindowToggle" type="button" aria-expanded="false" aria-controls="doubleWindowPanel" title="Double ELO window">2×</button>
+
     <div class="chunk-zone">
       <button class="toggle-btn" id="toggleBtn" aria-pressed="false" aria-label="Start a productive chunk">
         <span class="toggle-shape" id="toggleShape"></span>
@@ -892,6 +939,23 @@ input[type="time"], input[type="date"], select{
       <div class="chunk-info" id="chunkInfo" hidden>
         <div class="chunk-bar-track"><div class="chunk-bar-fill" id="chunkFill"></div></div>
         <span class="chunk-elapsed mono" id="chunkElapsed">00:00</span>
+      </div>
+    </div>
+
+    <div class="double-window-panel" id="doubleWindowPanel">
+      <div class="double-window-panel-inner">
+        <p class="hint">During this window, staying in a chunk earns double ELO - but sitting outside one costs five times the usual rate instead of the usual small drip.</p>
+        <label class="row-check"><input type="checkbox" id="dwEnabled"> Enable double window</label>
+        <div class="two-col">
+          <div class="field-row">
+            <label for="dwStart">Start</label>
+            <input type="time" id="dwStart">
+          </div>
+          <div class="field-row">
+            <label for="dwEnd">End</label>
+            <input type="time" id="dwEnd">
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1061,22 +1125,6 @@ input[type="time"], input[type="date"], select{
     </section>
 
     <section class="panel-section">
-      <h3>Double window</h3>
-      <p class="hint">During this window, staying in a chunk earns double ELO - but sitting outside one costs five times the usual rate instead of the usual small drip.</p>
-      <label class="row-check"><input type="checkbox" id="doubleWindowEnabled"> Enable double window</label>
-      <div class="two-col">
-        <div class="field-row">
-          <label for="doubleWindowStart">Start</label>
-          <input type="time" id="doubleWindowStart">
-        </div>
-        <div class="field-row">
-          <label for="doubleWindowEnd">End</label>
-          <input type="time" id="doubleWindowEnd">
-        </div>
-      </div>
-    </section>
-
-    <section class="panel-section">
       <h3>Sounds</h3>
       <p class="hint">Pick a short clip to play when you start or end a chunk. Stored only on this device.</p>
 
@@ -1107,6 +1155,21 @@ input[type="time"], input[type="date"], select{
             <input type="file" id="completeSoundFile" accept="audio/*" hidden>
           </label>
           <button class="btn-ghost small danger" id="completeSoundClear" type="button">Remove</button>
+        </div>
+      </div>
+
+      <div class="sound-row">
+        <div class="sound-row-label">
+          <span>Rank up</span>
+          <span class="sound-status" id="rankupSoundStatus">None set</span>
+        </div>
+        <div class="sound-row-actions">
+          <button class="btn-ghost small" id="rankupSoundPlay" type="button">Preview</button>
+          <label class="btn-ghost small file-btn">
+            Choose
+            <input type="file" id="rankupSoundFile" accept="audio/*" hidden>
+          </label>
+          <button class="btn-ghost small danger" id="rankupSoundClear" type="button">Remove</button>
         </div>
       </div>
     </section>
@@ -1600,6 +1663,7 @@ input[type="time"], input[type="date"], select{
   }
   var refreshStartSoundStatus = setupSoundPicker("start", "startSoundFile", "startSoundStatus", "startSoundPlay", "startSoundClear");
   var refreshCompleteSoundStatus = setupSoundPicker("complete", "completeSoundFile", "completeSoundStatus", "completeSoundPlay", "completeSoundClear");
+  var refreshRankupSoundStatus = setupSoundPicker("rankup", "rankupSoundFile", "rankupSoundStatus", "rankupSoundPlay", "rankupSoundClear");
 
   function persistSettings(next){
     settings = next;
@@ -2027,6 +2091,7 @@ input[type="time"], input[type="date"], select{
     renderToggle();
     renderLog();
     renderStreak();
+    renderDoubleWindowToggle();
     tick();
   }
 
@@ -2041,6 +2106,32 @@ input[type="time"], input[type="date"], select{
       openJournal();
     }
   });
+
+  /* ---------------- double window panel (on the card, not Settings) ---------------- */
+  var doubleWindowPanelOpen = false;
+  function renderDoubleWindowToggle(){
+    document.getElementById("doubleWindowToggle").classList.toggle("enabled", !!settings.doubleWindow.enabled);
+  }
+  function toggleDoubleWindowPanel(){
+    doubleWindowPanelOpen = !doubleWindowPanelOpen;
+    document.getElementById("doubleWindowToggle").setAttribute("aria-expanded", doubleWindowPanelOpen ? "true" : "false");
+    document.getElementById("doubleWindowPanel").classList.toggle("open", doubleWindowPanelOpen);
+    if (doubleWindowPanelOpen) {
+      document.getElementById("dwEnabled").checked = !!settings.doubleWindow.enabled;
+      document.getElementById("dwStart").value = settings.doubleWindow.start;
+      document.getElementById("dwEnd").value = settings.doubleWindow.end;
+    }
+  }
+  function saveDoubleWindowField(patch){
+    var next = clone(settings);
+    next.doubleWindow = Object.assign({}, next.doubleWindow, patch);
+    persistSettings(next);
+    renderDoubleWindowToggle();
+  }
+  document.getElementById("doubleWindowToggle").addEventListener("click", toggleDoubleWindowPanel);
+  document.getElementById("dwEnabled").addEventListener("change", function(e){ saveDoubleWindowField({ enabled: e.target.checked }); });
+  document.getElementById("dwStart").addEventListener("change", function(e){ saveDoubleWindowField({ start: e.target.value }); });
+  document.getElementById("dwEnd").addEventListener("change", function(e){ saveDoubleWindowField({ end: e.target.value }); });
 
   /* ---------------- journal modal ---------------- */
   var journalOverlay = document.getElementById("journalOverlay");
@@ -2201,9 +2292,6 @@ input[type="time"], input[type="date"], select{
     document.getElementById("schoolEnabled").checked = !!draft.schoolRoutine.enabled;
     document.getElementById("schoolStart").value = draft.schoolRoutine.start;
     document.getElementById("schoolEnd").value = draft.schoolRoutine.end;
-    document.getElementById("doubleWindowEnabled").checked = !!draft.doubleWindow.enabled;
-    document.getElementById("doubleWindowStart").value = draft.doubleWindow.start;
-    document.getElementById("doubleWindowEnd").value = draft.doubleWindow.end;
     renderWeekdayPicker();
     updateDayLengthHint();
     document.getElementById("overrideDate").value = "";
@@ -2212,6 +2300,7 @@ input[type="time"], input[type="date"], select{
     renderOverrideList();
     refreshStartSoundStatus();
     refreshCompleteSoundStatus();
+    refreshRankupSoundStatus();
     renderAccountStatus();
     settingsOverlay.hidden = false;
   }
@@ -2256,12 +2345,6 @@ input[type="time"], input[type="date"], select{
   });
   document.getElementById("schoolStart").addEventListener("input", function(e){ draft.schoolRoutine.start = e.target.value; });
   document.getElementById("schoolEnd").addEventListener("input", function(e){ draft.schoolRoutine.end = e.target.value; });
-
-  document.getElementById("doubleWindowEnabled").addEventListener("change", function(e){
-    draft.doubleWindow.enabled = e.target.checked;
-  });
-  document.getElementById("doubleWindowStart").addEventListener("input", function(e){ draft.doubleWindow.start = e.target.value; });
-  document.getElementById("doubleWindowEnd").addEventListener("input", function(e){ draft.doubleWindow.end = e.target.value; });
 
   document.getElementById("overrideType").addEventListener("change", function(e){
     document.getElementById("overrideCustomTimes").hidden = e.target.value !== "custom";
