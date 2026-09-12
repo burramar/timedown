@@ -609,6 +609,11 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
   text-align:center;
   max-width:380px;
   padding:20px;
+  /* Defaults (Sapphire-ish blue); overridden per rank via inline style
+     when the screen is shown. */
+  --rank-glow:58,130,190;
+  --rank-light:#8CB0D2;
+  --rank-dark:#0B2233;
 }
 .rankup-teaser{
   margin:0;
@@ -616,7 +621,7 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
   font-weight:700;
   letter-spacing:.24em;
   text-transform:uppercase;
-  color:#8CB0D2;
+  color:var(--rank-light);
   opacity:0;
   animation:rankupFadeUp .5s ease-out .05s forwards;
 }
@@ -626,10 +631,13 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
   display:flex;align-items:center;justify-content:center;
   margin:6px 0;
 }
+.rankup-stage.rankup-shift .rankup-badge-wrap{
+  animation:rankupHueShift 2.4s ease-in-out infinite;
+}
 .rankup-burst{
   position:absolute;
   inset:-70px;
-  background:radial-gradient(circle, rgba(var(--accent-rgb),0.55) 0%, rgba(var(--accent-rgb),0.16) 42%, rgba(var(--accent-rgb),0) 72%);
+  background:radial-gradient(circle, rgba(var(--rank-glow),0.55) 0%, rgba(var(--rank-glow),0.16) 42%, rgba(var(--rank-glow),0) 72%);
   opacity:0;
   animation:rankupBurst 1.2s ease-out .2s forwards;
 }
@@ -638,10 +646,10 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
   width:112px;height:112px;
   opacity:0;
   transform:scale(.4) rotate(-28deg);
-  filter:drop-shadow(0 0 20px rgba(var(--accent-rgb),.65));
+  filter:drop-shadow(0 0 20px rgba(var(--rank-glow),.65));
   animation:rankupBadgeIn .7s cubic-bezier(.2,.85,.25,1.3) .25s forwards;
 }
-.rankup-gem-outline{fill:rgba(255,255,255,0.08);stroke:#F2F6FA;stroke-width:2.5;stroke-linejoin:round;}
+.rankup-gem-outline{fill:rgba(255,255,255,0.08);stroke:var(--rank-light);stroke-width:2.5;stroke-linejoin:round;}
 .rankup-gem-facet{fill:none;stroke:rgba(242,246,250,0.55);stroke-width:1.1;}
 .rankup-shine{
   position:absolute;
@@ -662,8 +670,8 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
 .rankup-div-pill{
   font-size:0.95rem;
   font-weight:700;
-  color:#12202C;
-  background:#BFD6EA;
+  color:var(--rank-dark);
+  background:var(--rank-light);
   padding:4px 13px;
   border-radius:999px;
 }
@@ -713,11 +721,20 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
   55%{opacity:1;}
   100%{left:140%;opacity:0;}
 }
+/* Alexandrite only: a nod to the gem's real color-change property. */
+@keyframes rankupHueShift{
+  0%,100%{filter:hue-rotate(0deg);}
+  50%{filter:hue-rotate(75deg);}
+}
 @media (prefers-reduced-motion: reduce){
   .rankup-teaser,.rankup-burst,.rankup-badge,.rankup-shine,.rankup-rank,.rankup-sub,.rankup-continue{
     animation:none !important;
     opacity:1 !important;
     transform:none !important;
+  }
+  .rankup-stage.rankup-shift .rankup-badge-wrap{
+    animation:none !important;
+    filter:none !important;
   }
 }
 
@@ -1909,7 +1926,29 @@ input[type="time"], input[type="date"], select{
     if (info.tier > lastTier) showRankUp(info);
     lastTier = info.tier;
   }
+  /* One entry per RANKS index. glow: r,g,b for translucent burst/drop-
+     shadow use; light/dark: solid hex for the outline/pill. Chosen to
+     evoke each rank's real material - Alexandrite gets an animated hue
+     shift on top since color-change is that gem's whole thing. */
+  var RANK_COLORS = [
+    { glow:"196,120,66",  light:"#E3A873", dark:"#3D2311" }, // Copper
+    { glow:"150,150,155", light:"#C9C9CE", dark:"#242427" }, // Iron
+    { glow:"210,210,222", light:"#F1F1F6", dark:"#2B2B33" }, // Quartz
+    { glow:"120,140,155", light:"#A9BAC7", dark:"#16232C" }, // Titanium
+    { glow:"125,95,190",  light:"#B9A6E8", dark:"#1D1030" }, // Obsidian
+    { glow:"40,150,105",  light:"#7FE3B4", dark:"#04321F" }, // Emerald
+    { glow:"58,130,190",  light:"#8CB0D2", dark:"#0B2233" }, // Sapphire
+    { glow:"150,70,170",  light:"#D9A6E8", dark:"#2A1030" }, // Alexandrite
+    { glow:"180,80,50",   light:"#E8A98A", dark:"#3A1608" }  // Painite
+  ];
   function showRankUp(info){
+    var stage = document.querySelector(".rankup-stage");
+    var c = RANK_COLORS[info.rankIndex] || RANK_COLORS[0];
+    stage.style.setProperty("--rank-glow", c.glow);
+    stage.style.setProperty("--rank-light", c.light);
+    stage.style.setProperty("--rank-dark", c.dark);
+    stage.classList.toggle("rankup-shift", info.rankName === "Alexandrite");
+
     document.getElementById("rankUpName").textContent = info.rankName;
     document.getElementById("rankUpDiv").textContent = info.divName;
     document.getElementById("rankUpSub").textContent = info.isMax
