@@ -49,6 +49,7 @@ button{font-family:inherit;}
   gap:8px;
 }
 .icon-btn{
+  position:relative;
   width:38px;height:38px;
   border-radius:10px;
   border:1px solid var(--line);
@@ -57,6 +58,14 @@ button{font-family:inherit;}
   display:flex;align-items:center;justify-content:center;
   cursor:pointer;
   transition:background .15s ease, color .15s ease, border-color .15s ease;
+}
+.sync-dot{
+  position:absolute;
+  top:-3px;right:-3px;
+  width:9px;height:9px;
+  border-radius:50%;
+  background:var(--accent);
+  border:2px solid var(--paper);
 }
 .icon-btn:hover{background:var(--surface-2);color:var(--ink);}
 .icon-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
@@ -644,6 +653,7 @@ input[type="time"], input[type="date"], select{
       <line x1="2" y1="9.5" x2="16" y2="9.5"/><circle cx="6.5" cy="9.5" r="1.8" fill="currentColor" stroke="none"/>
       <line x1="2" y1="14" x2="16" y2="14"/><circle cx="13" cy="14" r="1.8" fill="currentColor" stroke="none"/>
     </svg>
+    <span class="sync-dot" id="syncDot" title="Signed in - syncing" hidden></span>
   </button>
   <button class="icon-btn" id="statsBtn" aria-label="Open stats">
     <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
@@ -1119,6 +1129,7 @@ input[type="time"], input[type="date"], select{
   function renderAccountStatus(){
     var signedOutEl = document.getElementById("accountSignedOut");
     var signedInEl = document.getElementById("accountSignedIn");
+    document.getElementById("syncDot").hidden = !fbUser;
     if (fbUser) {
       signedOutEl.hidden = true;
       signedInEl.hidden = false;
@@ -1148,7 +1159,9 @@ input[type="time"], input[type="date"], select{
       renderAccountStatus();
       if (user) migrateAndAttach();
     });
-    auth.getRedirectResult().catch(function(err){
+    auth.getRedirectResult().then(function(result){
+      if (result && result.user) showToast("Signed in as " + (result.user.email || "your account"));
+    }).catch(function(err){
       showToast("Sign-in failed: " + (err && err.code ? err.code : "unknown error"));
     });
   }
