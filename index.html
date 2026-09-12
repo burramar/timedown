@@ -867,7 +867,6 @@ input[type="time"], input[type="date"], select{
     <section class="panel-section">
       <h3>Account</h3>
       <div id="accountSignedOut">
-        <p class="hint">Sign in with Google to sync your chunks and settings across devices automatically - no codes to copy.</p>
         <button class="btn-primary" id="signInBtn" type="button">Sign in with Google</button>
       </div>
       <div id="accountSignedIn" hidden>
@@ -1142,13 +1141,20 @@ input[type="time"], input[type="date"], select{
   }
   function signIn(){
     if (!auth) { showToast("Sign-in isn't available right now"); return; }
-    try {
-      auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider()).catch(function(err){
-        showToast("Sign-in failed: " + (err && err.code ? err.code : "unknown error"));
-      });
-    } catch (err) {
-      showToast("Sign-in failed: " + (err && err.code ? err.code : "unknown error"));
-    }
+    var provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).then(function(result){
+      if (result && result.user) showToast("Signed in as " + (result.user.email || "your account"));
+    }).catch(function(err){
+      var code = err && err.code;
+      var popupIssue = code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment" || code === "auth/cancelled-popup-request";
+      if (popupIssue) {
+        auth.signInWithRedirect(provider).catch(function(err2){
+          showToast("Sign-in failed: " + (err2 && err2.code ? err2.code : "unknown error"));
+        });
+      } else if (code !== "auth/popup-closed-by-user") {
+        showToast("Sign-in failed: " + (code || "unknown error"));
+      }
+    });
   }
   function signOutUser(){ if (auth) auth.signOut(); }
 
