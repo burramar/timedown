@@ -2312,7 +2312,15 @@ input[type="time"], input[type="date"], select{
     });
   }
   function tickElo(now){
-    if (resyncingAfterHidden) return;
+    /* A hidden tab isn't stopped, just throttled - setInterval(tick) keeps
+       firing (if less often), so without this it would keep computing
+       decay/gain off whatever stale active/eloPoints it had when it went
+       hidden (the live listener can be throttled too and miss another
+       device's update) and push that guess to Firestore every 8s, clobbering
+       real progress made elsewhere while this tab wasn't looking. The
+       visibilitychange resync above only guards its own brief refetch
+       window; this guard covers the whole time the tab is hidden. */
+    if (resyncingAfterHidden || document.visibilityState !== "visible") return;
     var nowMs = now.getTime();
     var deltaSec = Math.min(300, Math.max(0, (nowMs - lastEloTickAt) / 1000));
     lastEloTickAt = nowMs;
