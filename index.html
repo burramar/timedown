@@ -2082,9 +2082,18 @@ input[type="time"], input[type="date"], select{
      (including right after loading someone else's synced progress)
      just records the current tier instead of celebrating it. */
   var lastTier = null;
+  /* A rank-up can only happen while gaining ELO, which only happens
+     while in a chunk - so if one fires mid-chunk, queue it instead of
+     interrupting with a full-screen takeover; it's shown once the
+     chunk actually ends (see the journal-save handler). If somehow
+     detected with no chunk running (e.g. catching up after a remote
+     sync), there's nothing to wait for, so show it right away. */
+  var pendingRankUp = null;
   function checkRankUp(info){
     if (lastTier === null) { lastTier = info.tier; return; }
-    if (info.tier > lastTier) showRankUp(info);
+    if (info.tier > lastTier) {
+      if (active) pendingRankUp = info; else showRankUp(info);
+    }
     lastTier = info.tier;
   }
   /* One entry per RANKS index. glow: r,g,b for translucent burst/drop-
@@ -2534,6 +2543,11 @@ input[type="time"], input[type="date"], select{
     renderAll();
     flashAchievement();
     showToast(todayStatText());
+    if (pendingRankUp) {
+      var ru = pendingRankUp;
+      pendingRankUp = null;
+      setTimeout(function(){ showRankUp(ru); }, 600);
+    }
   });
 
   /* ---------------- confirm dialog (replaces window.confirm) ---------------- */
