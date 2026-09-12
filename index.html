@@ -291,6 +291,15 @@ button{font-family:inherit;}
   gap:10px;
   padding-top:2px;
 }
+#dwEditable{display:flex;flex-direction:column;gap:10px;}
+.dw-locked-range{
+  font-family:"IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric:tabular-nums;
+  font-size:1rem;
+  font-weight:600;
+  color:var(--accent-strong);
+  margin:0;
+}
 @media (prefers-reduced-motion: reduce){
   .double-window-panel{transition:opacity .2s ease;}
 }
@@ -406,11 +415,17 @@ button{font-family:inherit;}
    falls without covering whatever's drawn underneath it (school
    hatching, logged chunks). */
 .day-seg.double-window{
-  top:-3px;
-  bottom:-3px;
-  background:transparent;
-  border:1.5px dashed var(--accent);
-  border-radius:5px;
+  background-color:rgba(var(--accent-rgb),0.1);
+  background-image:repeating-linear-gradient(135deg, rgba(var(--accent-rgb),0.4) 0 2px, transparent 2px 7px);
+  pointer-events:none;
+}
+/* Marks the part of a chunk that actually fell inside the double
+   window - drawn on top of the solid chunk fill (which would
+   otherwise hide the striped region under it), using bright stripes
+   instead of accent-colored ones so it reads as "bonus" rather than
+   being confused with the plain scheduled-window stripes underneath. */
+.day-seg.bonus-overlay{
+  background:repeating-linear-gradient(135deg, rgba(255,255,255,0.6) 0 3px, transparent 3px 8px);
   pointer-events:none;
 }
 @media (prefers-reduced-motion: reduce){
@@ -1046,17 +1061,25 @@ input[type="time"], input[type="date"], select{
 
     <div class="double-window-panel" id="doubleWindowPanel">
       <div class="double-window-panel-inner">
-        <p class="hint">During this window, staying in a chunk earns double ELO - but sitting outside one costs five times the usual rate instead of the usual small drip.</p>
-        <label class="row-check"><input type="checkbox" id="dwEnabled"> Enable double window</label>
-        <div class="two-col">
-          <div class="field-row">
-            <label for="dwStart">Start</label>
-            <input type="time" id="dwStart">
+        <p class="hint">Lock in a window: stay in a chunk during it for double ELO, or lose ELO five times as fast if you're not. Once it's locked in, it can't be changed or cancelled - you'll face whatever you set.</p>
+
+        <div id="dwEditable">
+          <div class="two-col">
+            <div class="field-row">
+              <label for="dwStart">Start</label>
+              <input type="time" id="dwStart" value="18:00">
+            </div>
+            <div class="field-row">
+              <label for="dwEnd">End</label>
+              <input type="time" id="dwEnd" value="20:00">
+            </div>
           </div>
-          <div class="field-row">
-            <label for="dwEnd">End</label>
-            <input type="time" id="dwEnd">
-          </div>
+          <button class="btn-primary full" id="dwSetBtn" type="button">Lock in this window</button>
+        </div>
+
+        <div id="dwLocked" hidden>
+          <p class="dw-locked-range" id="dwLockedRange"></p>
+          <p class="hint">Locked in - no changes, no cancelling, until it passes.</p>
         </div>
       </div>
     </div>
@@ -1411,7 +1434,11 @@ input[type="time"], input[type="date"], select{
     sleepTime: "23:00",
     schoolRoutine: { enabled: true, days: [1,2,3,4,5], start: "08:00", end: "15:00" },
     schoolOverrides: {},
-    doubleWindow: { enabled: false, start: "18:00", end: "20:00" }
+    /* start/end are just the last-picked time-of-day, for repopulating
+       the form. startAt/endAt (ISO timestamps, or null) are the actual
+       locked-in commitment, if any - a one-time absolute window, not a
+       recurring daily schedule. */
+    doubleWindow: { start: "18:00", end: "20:00", startAt: null, endAt: null }
   };
   var CHUNK_TARGET_MS = 60*60*1000;
   var LS_KEY = "timedown_v1";
@@ -1555,15 +1582,18 @@ input[type="time"], input[type="date"], select{
 
   /* True if `now` falls in the user's configured double-ELO window
      (recurring daily; handles a window that crosses midnight). */
+  /* A one-time locked-in commitment (absolute timestamps), not a
+     recurring daily schedule - true only between that exact start and
+     end, and only while a commitment actually exists. */
   function isInDoubleWindow(now, settings){
     var dw = settings.doubleWindow;
-    if (!dw || !dw.enabled) return false;
-    var start = combine(now, parseHM(dw.start));
-    var end = combine(now, parseHM(dw.end));
-    if (end <= start) end = addDays(end, 1);
-    if (now >= start && now < end) return true;
-    var startPrev = addDays(start, -1), endPrev = addDays(end, -1);
-    return now >= startPrev && now < endPrev;
+    if (!dw || !dw.startAt || !dw.endAt) return false;
+    var start = new Date(dw.startAt), end = new Date(dw.endAt);
+    return now >= start && now < end;
+  }
+  function isDoubleWindowLocked(settings, now){
+    var dw = settings.doubleWindow;
+    return !!(dw && dw.endAt && (now || new Date()) < new Date(dw.endAt));
   }
   function currentEloRatePerMinute(now){
     var inWindow = isInDoubleWindow(now, settings);
@@ -1886,6 +1916,19 @@ input[type="time"], input[type="date"], select{
     if (total <= 0) return;
 
     function pct(d){ return Math.min(100, Math.max(0, (d - cycle.cycleStart) / total * 100)); }
+    function addSeg(className, start, end, minWidth){
+      var seg = document.createElement("div");
+      seg.className = className;
+      var l = pct(start), r = pct(end);
+      seg.style.left = l + "%";
+      seg.style.width = Math.max(minWidth || 0.5, r - l) + "%";
+      track.appendChild(seg);
+    }
+    function overlap(aStart, aEnd, bStart, bEnd){
+      var s = aStart > bStart ? aStart : bStart;
+      var e = aEnd < bEnd ? aEnd : bEnd;
+      return e > s ? { start: s, end: e } : null;
+    }
 
     var school = getSchoolBlock(cycle.cycleStart, settings);
     if (school) {
@@ -1893,52 +1936,48 @@ input[type="time"], input[type="date"], select{
       var sEnd = combine(cycle.cycleStart, parseHM(school.end));
       if (sEnd <= sStart) sEnd = addDays(sEnd, 1);
       if (sStart < cycle.cycleEnd && sEnd > cycle.cycleStart) {
-        var seg = document.createElement("div");
-        seg.className = "day-seg school";
-        var l = pct(sStart), r = pct(sEnd);
-        seg.style.left = l + "%";
-        seg.style.width = Math.max(0.5, r - l) + "%";
-        track.appendChild(seg);
+        addSeg("day-seg school", sStart < cycle.cycleStart ? cycle.cycleStart : sStart, sEnd > cycle.cycleEnd ? cycle.cycleEnd : sEnd);
+      }
+    }
+
+    /* Double window drawn as a striped region before chunks, so it
+       reads as "this time is special" underneath whatever's logged
+       there - completed/live chunks paint over it, and any part of a
+       chunk that actually falls inside the window gets its own
+       bonus-overlay pass afterward so that overlap stays visible even
+       though the plain chunk fill would otherwise cover the stripes. */
+    var dwRange = null;
+    var dw = settings.doubleWindow;
+    if (dw && dw.startAt && dw.endAt) {
+      var dwStart = new Date(dw.startAt), dwEnd = new Date(dw.endAt);
+      var dwClip = overlap(dwStart, dwEnd, cycle.cycleStart, cycle.cycleEnd);
+      if (dwClip) {
+        dwRange = dwClip;
+        addSeg("day-seg double-window", dwClip.start, dwClip.end);
       }
     }
 
     var todayKey = dateKey(cycle.cycleStart);
+    var chunkRanges = [];
     sessions.filter(function(s){ return s.date === todayKey; }).forEach(function(s){
       var st = new Date(s.startTime), en = new Date(s.endTime);
-      var seg = document.createElement("div");
       var isNew = !animatedChunkIds[s.id];
-      seg.className = "day-seg chunk" + (isNew ? " new" : "");
+      addSeg("day-seg chunk" + (isNew ? " new" : ""), st, en, 0.6);
       if (isNew) animatedChunkIds[s.id] = true;
-      var l = pct(st), r = pct(en);
-      seg.style.left = l + "%";
-      seg.style.width = Math.max(0.6, r - l) + "%";
-      track.appendChild(seg);
+      chunkRanges.push({ start: st, end: en });
     });
 
     if (active) {
       var st2 = new Date(active.startTime);
-      var seg2 = document.createElement("div");
-      seg2.className = "day-seg chunk live";
-      var l2 = pct(st2), r2 = pct(now);
-      seg2.style.left = l2 + "%";
-      seg2.style.width = Math.max(0.6, r2 - l2) + "%";
-      track.appendChild(seg2);
+      addSeg("day-seg chunk live", st2, now, 0.6);
+      chunkRanges.push({ start: st2, end: now });
     }
 
-    if (settings.doubleWindow && settings.doubleWindow.enabled) {
-      var dwStart = combine(cycle.cycleStart, parseHM(settings.doubleWindow.start));
-      var dwEnd = combine(cycle.cycleStart, parseHM(settings.doubleWindow.end));
-      if (dwEnd <= dwStart) dwEnd = addDays(dwEnd, 1);
-      var dwClipStart = dwStart < cycle.cycleStart ? cycle.cycleStart : dwStart;
-      var dwClipEnd = dwEnd > cycle.cycleEnd ? cycle.cycleEnd : dwEnd;
-      if (dwClipEnd > dwClipStart) {
-        var dwSeg = document.createElement("div");
-        dwSeg.className = "day-seg double-window";
-        var ld = pct(dwClipStart), rd = pct(dwClipEnd);
-        dwSeg.style.left = ld + "%";
-        dwSeg.style.width = Math.max(0.5, rd - ld) + "%";
-        track.appendChild(dwSeg);
-      }
+    if (dwRange) {
+      chunkRanges.forEach(function(cr){
+        var ov = overlap(cr.start, cr.end, dwRange.start, dwRange.end);
+        if (ov) addSeg("day-seg bonus-overlay", ov.start, ov.end, 0.6);
+      });
     }
 
     if (now >= cycle.cycleStart && now <= cycle.cycleEnd) {
@@ -2383,7 +2422,7 @@ input[type="time"], input[type="date"], select{
     renderToggle();
     renderLog();
     renderStreak();
-    renderDoubleWindowToggle();
+    renderDoubleWindowUI();
     tick();
   }
 
@@ -2399,31 +2438,53 @@ input[type="time"], input[type="date"], select{
     }
   });
 
-  /* ---------------- double window panel (on the card, not Settings) ---------------- */
+  /* ---------------- double window panel (on the card, not Settings) ----------------
+     A one-time commitment, not a toggle: pick a start/end, confirm once,
+     and it's locked until it passes - no editing or cancelling. */
   var doubleWindowPanelOpen = false;
-  function renderDoubleWindowToggle(){
-    document.getElementById("doubleWindowToggle").classList.toggle("enabled", !!settings.doubleWindow.enabled);
+  function renderDoubleWindowUI(){
+    var locked = isDoubleWindowLocked(settings);
+    document.getElementById("doubleWindowToggle").classList.toggle("enabled", locked);
+    document.getElementById("dwEditable").hidden = locked;
+    document.getElementById("dwLocked").hidden = !locked;
+    if (locked) {
+      document.getElementById("dwLockedRange").textContent =
+        fmtTime(parseHM(settings.doubleWindow.start)) + " – " + fmtTime(parseHM(settings.doubleWindow.end));
+    }
   }
   function toggleDoubleWindowPanel(){
     doubleWindowPanelOpen = !doubleWindowPanelOpen;
     document.getElementById("doubleWindowToggle").setAttribute("aria-expanded", doubleWindowPanelOpen ? "true" : "false");
     document.getElementById("doubleWindowPanel").classList.toggle("open", doubleWindowPanelOpen);
-    if (doubleWindowPanelOpen) {
-      document.getElementById("dwEnabled").checked = !!settings.doubleWindow.enabled;
+    if (doubleWindowPanelOpen && !isDoubleWindowLocked(settings)) {
       document.getElementById("dwStart").value = settings.doubleWindow.start;
       document.getElementById("dwEnd").value = settings.doubleWindow.end;
     }
   }
-  function saveDoubleWindowField(patch){
-    var next = clone(settings);
-    next.doubleWindow = Object.assign({}, next.doubleWindow, patch);
-    persistSettings(next);
-    renderDoubleWindowToggle();
-  }
   document.getElementById("doubleWindowToggle").addEventListener("click", toggleDoubleWindowPanel);
-  document.getElementById("dwEnabled").addEventListener("change", function(e){ saveDoubleWindowField({ enabled: e.target.checked }); });
-  document.getElementById("dwStart").addEventListener("change", function(e){ saveDoubleWindowField({ start: e.target.value }); });
-  document.getElementById("dwEnd").addEventListener("change", function(e){ saveDoubleWindowField({ end: e.target.value }); });
+  document.getElementById("dwSetBtn").addEventListener("click", function(){
+    var startVal = document.getElementById("dwStart").value;
+    var endVal = document.getElementById("dwEnd").value;
+    if (!startVal || !endVal) return;
+    var now = new Date();
+    var startDT = combine(now, parseHM(startVal));
+    var endDT = combine(now, parseHM(endVal));
+    if (endDT <= startDT) endDT = addDays(endDT, 1);
+    if (endDT <= now) {
+      showToast("That time has already passed today");
+      return;
+    }
+    showConfirm(
+      "You'll get double ELO for staying in a chunk during this window, or lose it five times as fast if you're not. Once locked in, this cannot be changed or cancelled.",
+      { title: "Lock in " + fmtTime(parseHM(startVal)) + " – " + fmtTime(parseHM(endVal)) + "?", okLabel: "Lock it in" }
+    ).then(function(ok){
+      if (!ok) return;
+      var next = clone(settings);
+      next.doubleWindow = { start: startVal, end: endVal, startAt: startDT.toISOString(), endAt: endDT.toISOString() };
+      persistSettings(next);
+      renderDoubleWindowUI();
+    });
+  });
 
   /* ---------------- journal modal ---------------- */
   var journalOverlay = document.getElementById("journalOverlay");
