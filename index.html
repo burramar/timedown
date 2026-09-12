@@ -1864,7 +1864,10 @@ input[type="time"], input[type="date"], select{
     return userSoundRef(type).put(blob, {
       contentType: blob.type || "audio/mpeg",
       customMetadata: { updatedAt: String(updatedAt) }
-    }).catch(function(err){ console.error("Sound upload failed (" + type + "):", err); });
+    }).catch(function(err){
+      console.error("Sound upload failed (" + type + "):", err);
+      throw err; // re-throw so callers (e.g. the picker's status text) can react too
+    });
   }
   function pullSoundFromCloud(type, updatedAt){
     return userSoundRef(type).getDownloadURL()
@@ -1918,7 +1921,13 @@ input[type="time"], input[type="date"], select{
       var updatedAt = Date.now();
       saveSoundBlob(type, file, updatedAt).then(function(){
         refreshStatus();
-        pushSoundToCloud(type, file, updatedAt);
+        if (!fbUser) return;
+        statusEl.textContent = "Custom sound set - syncing…";
+        pushSoundToCloud(type, file, updatedAt).then(function(){
+          statusEl.textContent = "Custom sound set - synced";
+        }).catch(function(){
+          statusEl.textContent = "Custom sound set - sync failed (check console)";
+        });
       });
     });
     document.getElementById(playId).addEventListener("click", function(){ playSound(type); });
