@@ -510,55 +510,131 @@ textarea:focus-visible, input:focus-visible, select:focus-visible{outline:2px so
 .field-error.show{display:block;}
 
 /* ---------- Rank-up celebration ---------- */
-.rankup-overlay{z-index:45;}
-.rankup-modal{
+/* Deliberately always-dark, regardless of the site's light theme - this
+   is a one-off cinematic moment, not a themed UI surface. */
+.rankup-overlay{
+  z-index:45;
+  background:rgba(9,10,13,0.95);
+}
+.rankup-stage{
   position:relative;
-  overflow:hidden;
+  display:flex;
+  flex-direction:column;
   align-items:center;
+  gap:10px;
   text-align:center;
-  gap:12px;
-  padding:34px 26px 26px;
-  animation:rankupPop .4s cubic-bezier(.2,.9,.3,1.2);
+  max-width:380px;
+  padding:20px;
 }
-.rankup-glow{
-  position:absolute;
-  inset:-30%;
-  background:radial-gradient(circle at 50% 38%, rgba(var(--accent-rgb),0.4) 0%, rgba(var(--accent-rgb),0) 60%);
-  pointer-events:none;
-  animation:rankupGlow 1.6s ease-out;
-}
-.rankup-label{
-  position:relative;
+.rankup-teaser{
   margin:0;
-  font-size:0.78rem;
+  font-size:0.8rem;
   font-weight:700;
-  letter-spacing:.14em;
+  letter-spacing:.24em;
   text-transform:uppercase;
-  color:var(--accent-strong);
+  color:#8CB0D2;
+  opacity:0;
+  animation:rankupFadeUp .5s ease-out .05s forwards;
 }
-.rankup-rank{position:relative;display:flex;align-items:baseline;justify-content:center;gap:10px;flex-wrap:wrap;}
-.rankup-rank-name{font-size:clamp(2rem, 9vw, 2.6rem);font-weight:700;color:var(--ink);}
+.rankup-badge-wrap{
+  position:relative;
+  width:140px;height:140px;
+  display:flex;align-items:center;justify-content:center;
+  margin:6px 0;
+}
+.rankup-burst{
+  position:absolute;
+  inset:-70px;
+  background:radial-gradient(circle, rgba(var(--accent-rgb),0.55) 0%, rgba(var(--accent-rgb),0.16) 42%, rgba(var(--accent-rgb),0) 72%);
+  opacity:0;
+  animation:rankupBurst 1.2s ease-out .2s forwards;
+}
+.rankup-badge{
+  position:relative;
+  width:112px;height:112px;
+  opacity:0;
+  transform:scale(.4) rotate(-28deg);
+  filter:drop-shadow(0 0 20px rgba(var(--accent-rgb),.65));
+  animation:rankupBadgeIn .7s cubic-bezier(.2,.85,.25,1.3) .25s forwards;
+}
+.rankup-gem-outline{fill:rgba(255,255,255,0.08);stroke:#F2F6FA;stroke-width:2.5;stroke-linejoin:round;}
+.rankup-gem-facet{fill:none;stroke:rgba(242,246,250,0.55);stroke-width:1.1;}
+.rankup-shine{
+  position:absolute;
+  top:0;left:-140%;
+  width:55%;height:100%;
+  background:linear-gradient(75deg, transparent, rgba(255,255,255,.7), transparent);
+  transform:skewX(-18deg);
+  opacity:0;
+  animation:rankupShine .9s ease-out .95s forwards;
+}
+.rankup-rank{
+  position:relative;
+  display:flex;align-items:baseline;justify-content:center;gap:10px;flex-wrap:wrap;
+  opacity:0;
+  animation:rankupFadeUp .5s ease-out .85s forwards;
+}
+.rankup-rank-name{font-size:clamp(1.9rem, 8vw, 2.5rem);font-weight:700;color:#fff;}
 .rankup-div-pill{
-  font-size:1rem;
+  font-size:0.95rem;
   font-weight:700;
-  color:var(--accent-strong);
-  background:var(--accent-soft);
-  padding:4px 14px;
+  color:#12202C;
+  background:#BFD6EA;
+  padding:4px 13px;
   border-radius:999px;
 }
-.rankup-sub{position:relative;margin:0;font-size:0.86rem;color:var(--ink-soft);}
-@keyframes rankupPop{
-  0%{opacity:0;transform:scale(.92);}
-  100%{opacity:1;transform:scale(1);}
+.rankup-sub{
+  position:relative;
+  margin:0;
+  font-size:0.85rem;
+  color:rgba(255,255,255,.62);
+  opacity:0;
+  animation:rankupFadeUp .5s ease-out 1.05s forwards;
 }
-@keyframes rankupGlow{
-  0%{opacity:0;transform:scale(.7);}
-  30%{opacity:1;transform:scale(1);}
-  100%{opacity:.55;transform:scale(1.05);}
+.rankup-continue{
+  position:relative;
+  margin-top:8px;
+  background:none;
+  border:1px solid rgba(255,255,255,.32);
+  color:#fff;
+  padding:10px 22px;
+  border-radius:999px;
+  font-size:0.85rem;
+  font-weight:600;
+  font-family:inherit;
+  cursor:pointer;
+  opacity:0;
+  transition:background .15s ease;
+  animation:rankupFadeUp .5s ease-out 1.3s forwards;
+}
+.rankup-continue:hover{background:rgba(255,255,255,.1);}
+
+@keyframes rankupFadeUp{
+  from{opacity:0;transform:translateY(8px);}
+  to{opacity:1;transform:translateY(0);}
+}
+@keyframes rankupBurst{
+  0%{opacity:0;transform:scale(.5);}
+  40%{opacity:1;transform:scale(1);}
+  100%{opacity:.5;transform:scale(1.15);}
+}
+@keyframes rankupBadgeIn{
+  0%{opacity:0;transform:scale(.4) rotate(-28deg);}
+  70%{opacity:1;transform:scale(1.08) rotate(4deg);}
+  100%{opacity:1;transform:scale(1) rotate(0deg);}
+}
+@keyframes rankupShine{
+  0%{left:-140%;opacity:0;}
+  15%{opacity:1;}
+  55%{opacity:1;}
+  100%{left:140%;opacity:0;}
 }
 @media (prefers-reduced-motion: reduce){
-  .rankup-modal{animation:none;}
-  .rankup-glow{animation:none;opacity:.55;}
+  .rankup-teaser,.rankup-burst,.rankup-badge,.rankup-shine,.rankup-rank,.rankup-sub,.rankup-continue{
+    animation:none !important;
+    opacity:1 !important;
+    transform:none !important;
+  }
 }
 
 .btn-primary, .btn-ghost{
@@ -897,15 +973,25 @@ input[type="time"], input[type="date"], select{
 
 <!-- Rank-up celebration -->
 <div class="overlay center rankup-overlay" id="rankUpOverlay" hidden>
-  <div class="modal rankup-modal">
-    <div class="rankup-glow" aria-hidden="true"></div>
-    <p class="rankup-label">Rank up</p>
+  <div class="rankup-stage">
+    <p class="rankup-teaser">Rank up</p>
+    <div class="rankup-badge-wrap">
+      <div class="rankup-burst" aria-hidden="true"></div>
+      <svg class="rankup-badge" viewBox="0 0 100 100" aria-hidden="true">
+        <polygon class="rankup-gem-outline" points="50,5 90,29 90,71 50,95 10,71 10,29"/>
+        <polyline class="rankup-gem-facet" points="10,29 50,47 90,29"/>
+        <polyline class="rankup-gem-facet" points="10,71 50,47 90,71"/>
+        <line class="rankup-gem-facet" x1="50" y1="5" x2="50" y2="47"/>
+        <line class="rankup-gem-facet" x1="50" y1="95" x2="50" y2="47"/>
+      </svg>
+      <div class="rankup-shine" aria-hidden="true"></div>
+    </div>
     <div class="rankup-rank">
       <span class="rankup-rank-name" id="rankUpName">Copper</span>
       <span class="rankup-div-pill" id="rankUpDiv">I</span>
     </div>
     <p class="rankup-sub" id="rankUpSub"></p>
-    <button class="btn-primary full" id="rankUpClose" type="button">Nice</button>
+    <button class="rankup-continue" id="rankUpClose" type="button">Tap to continue</button>
   </div>
 </div>
 
