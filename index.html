@@ -1258,7 +1258,21 @@ input[type="time"], input[type="date"], select{
 
     <section class="panel-section">
       <h3>Preview</h3>
-      <p class="hint">Shows the rank-up screen using your current rank - doesn't change your real ELO.</p>
+      <p class="hint">Shows the rank-up screen for the chosen rank - doesn't change your real ELO.</p>
+      <div class="field-row">
+        <label for="previewRankSelect">Rank</label>
+        <select id="previewRankSelect">
+          <option value="0">Copper</option>
+          <option value="1">Iron</option>
+          <option value="2">Quartz</option>
+          <option value="3">Titanium</option>
+          <option value="4">Obsidian</option>
+          <option value="5">Emerald</option>
+          <option value="6">Sapphire</option>
+          <option value="7">Alexandrite</option>
+          <option value="8">Painite</option>
+        </select>
+      </div>
       <button class="btn-ghost small" id="previewRankUpBtn" type="button">Preview rank-up screen</button>
     </section>
 
@@ -1970,7 +1984,8 @@ input[type="time"], input[type="date"], select{
     if (e.target === document.getElementById("rankUpOverlay")) closeRankUp();
   });
   document.getElementById("previewRankUpBtn").addEventListener("click", function(){
-    showRankUp(getRankInfo(eloPoints));
+    var idx = Number(document.getElementById("previewRankSelect").value);
+    showRankUp(getRankInfo(rankThresholds()[idx]));
   });
 
   function renderLog(){
