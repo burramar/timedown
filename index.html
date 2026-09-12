@@ -1744,13 +1744,25 @@ input[type="time"], input[type="date"], select{
     if (unsubSessions) { unsubSessions(); unsubSessions = null; }
     if (unsubMeta) { unsubMeta(); unsubMeta = null; }
   }
+  /* onSnapshot fires immediately with whatever's in this device's own local
+     Firestore cache (metadata.fromCache = true) before the server has had a
+     chance to weigh in, then fires again once it does. On a device that
+     hasn't synced in a while, that first, cache-only event can be older than
+     what migrateAndAttach just reconciled moments earlier - and unlike that
+     one-time merge, this ongoing listener has no way to compare "older vs
+     newer" (ELO legitimately goes down too, via decay, so it can't just take
+     the max). Skipping fromCache events means only server-confirmed data
+     ever overwrites live state, at the cost of not live-updating while
+     offline - a fair trade against silently regressing real progress. */
   function attachCloud(){
     unsubSessions = userSessionsCol().onSnapshot(function(snap){
+      if (snap.metadata.fromCache) return;
       sessions = snap.docs.map(function(d){ return d.data(); });
       saveLocal();
       renderAll();
     }, function(){});
     unsubMeta = userMetaDoc().onSnapshot(function(doc){
+      if (doc.metadata.fromCache) return;
       if (!doc.exists) return;
       var data = doc.data();
       if (data.settings) settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings);
