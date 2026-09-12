@@ -1793,6 +1793,20 @@ input[type="time"], input[type="date"], select{
      activity while hidden, so that memory can be well out of date) and
      can push that stale value before the fresh server read lands. */
   var resyncingAfterHidden = false;
+  /* False until it's actually safe to bank (settle) the local ELO
+     checkpoint - i.e. once we know whether there's cloud data to compare
+     it against first. Without this, tickElo settling on its very first,
+     synchronous call (from the renderAll() at the bottom of this script,
+     which runs before Firebase Auth has even resolved) stamps
+     lastEloTickAt to "now" well before migrateAndAttach's async fetch
+     gets a chance to run adoptEloCheckpoint - and once the local
+     checkpoint is stamped "now", no cloud checkpoint (necessarily from
+     some moment before now) could ever be judged newer again, silently
+     defeating the recency check on every single cold start. Set true
+     once we know the answer either way: immediately if there's no auth
+     at all, immediately on a signed-out auth state, or once
+     migrateAndAttach's reconciliation has actually landed. */
+  var eloSettleReady = false;
   var unsubSessions = null, unsubMeta = null;
   try {
     firebase.initializeApp(firebaseConfig);
@@ -1801,6 +1815,7 @@ input[type="time"], input[type="date"], select{
     db.enablePersistence({ synchronizeTabs: true }).catch(function(){});
     storage = firebase.storage();
   } catch (e) { /* SDK blocked or unavailable - app still works locally */ }
+  if (!auth) eloSettleReady = true;
 
   function userSessionsCol(){ return db.collection("users").doc(fbUser.uid).collection("sessions"); }
   function userMetaDoc(){ return db.collection("users").doc(fbUser.uid).collection("meta").doc("state"); }
@@ -1912,6 +1927,7 @@ input[type="time"], input[type="date"], select{
       return batch.commit();
     }).catch(function(){}).then(function(){
       cloudReady = true;
+      eloSettleReady = true;
       attachCloud();
     });
   }
@@ -1955,6 +1971,7 @@ input[type="time"], input[type="date"], select{
       fbUser = user;
       renderAccountStatus();
       if (user) { migrateAndAttach(); syncAllSoundsWithCloud(); }
+      else { eloSettleReady = true; }
     });
     auth.getRedirectResult().then(function(result){
       if (result && result.user) showToast("Signed in as " + (result.user.email || "your account"));
@@ -2356,7 +2373,37 @@ input[type="time"], input[type="date"], select{
     tickElo(now);
   }
 
-  /* Pushes eloPoints to Firestore right now, bypassing the tick
+  /* The live displayed ELO, extrapolated from the last settled checkpoint
+     (eloPoints as of lastEloTickAt) using whatever rate applies right now
+     - a pure read, no state mutated, so it's always safe to call, even
+     before eloSettleReady. This is what makes settling only occasional
+     (see settleElo) not cost anything visually: the meter still updates
+     every second regardless of when the checkpoint itself last moved. */
+  function liveElo(now){
+    var deltaSec = Math.max(0, (now.getTime() - lastEloTickAt) / 1000);
+    var ratePerMin = currentEloRatePerMinute(now);
+    return Math.max(0, eloPoints + ratePerMin * (deltaSec / 60));
+  }
+  /* Banks the current live value into the checkpoint itself (eloPoints,
+     lastEloTickAt) and saves it locally. Called right before anything
+     that changes the rate (active toggling) so the OLD rate's contribution
+     up to that exact moment isn't lost once the NEW rate takes over, and
+     from pushEloNow so what gets synced is the checkpoint as of the
+     moment it's sent, not a live-only value nothing else knows about.
+     Guarded by eloSettleReady itself, not just by its callers - a chunk
+     toggled in the split second before migrateAndAttach resolves would
+     otherwise stamp lastEloTickAt to "now" just as easily as tickElo's
+     own first call would, quietly reopening the exact bug eloSettleReady
+     exists to close. Skipping the settle here just means that one
+     boundary is attributed to the new rate instead of the old for a
+     moment - a rounding error, not a lost-progress bug. */
+  function settleElo(now){
+    if (!eloSettleReady) return;
+    eloPoints = liveElo(now);
+    lastEloTickAt = now.getTime();
+    saveLocal();
+  }
+  /* Pushes the checkpoint to Firestore right now, bypassing the tick
      throttle - used at chunk start/end so the moments you'd actually
      go check another device don't have to wait out the timer. Sends
      eloPointsAt alongside it (see adoptEloCheckpoint) so whichever device
@@ -2364,37 +2411,38 @@ input[type="time"], input[type="date"], select{
      already has. Logs failures instead of swallowing them, so a sync
      problem is at least visible in the console rather than silently
      invisible. */
-  function pushEloNow(){
+  function pushEloNow(now){
     if (!fbUser || !cloudReady) return;
-    lastEloPushAt = Date.now();
+    now = now || new Date();
+    settleElo(now);
+    lastEloPushAt = now.getTime();
     userMetaDoc().set({ eloPoints: eloPoints, eloPointsAt: new Date(lastEloTickAt).toISOString() }, { merge: true }).catch(function(err){
       console.error("ELO sync failed:", err);
     });
   }
-  /* Advances ELO by whatever's elapsed since the last tick at the current
-     rate. Uses a real wall-clock delta (not a fixed 1s assumption) so a
-     throttled/backgrounded tab still catches up correctly, capped at 5
-     minutes per tick so a long-suspended tab can't cause a huge swing. */
   function tickElo(now){
+    /* renderEloMeter reads liveElo, a pure computation - always safe,
+       regardless of hidden/resync/eloSettleReady state, so the meter
+       keeps ticking visually even in the brief windows below where
+       actually settling the checkpoint isn't safe yet. */
+    renderEloMeter(now);
     /* A hidden tab isn't stopped, just throttled - setInterval(tick) keeps
-       firing (if less often), so without this it would keep computing
-       decay/gain off whatever stale active/eloPoints it had when it went
-       hidden (the live listener can be throttled too and miss another
-       device's update) and push that guess to Firestore every 8s, clobbering
-       real progress made elsewhere while this tab wasn't looking. The
-       visibilitychange resync above only guards its own brief refetch
-       window; this guard covers the whole time the tab is hidden. */
-    if (resyncingAfterHidden || document.visibilityState !== "visible") return;
+       firing (if less often), so without this it would keep settling and
+       pushing a checkpoint computed off whatever stale active/settings it
+       had when it went hidden (the live listener can be throttled too and
+       miss another device's update), clobbering real progress made
+       elsewhere while this tab wasn't looking. The visibilitychange resync
+       above only guards its own brief refetch window; this guard covers
+       the whole time the tab is hidden. eloSettleReady guards the other
+       end of the same problem: settling before migrateAndAttach has had
+       its one chance to compare the boot-time checkpoint against the
+       cloud's would stamp lastEloTickAt to "now" and make the cloud's
+       checkpoint permanently look older by definition, regardless of
+       which one is actually more complete. */
+    if (resyncingAfterHidden || document.visibilityState !== "visible" || !eloSettleReady) return;
     var nowMs = now.getTime();
-    var deltaSec = Math.min(300, Math.max(0, (nowMs - lastEloTickAt) / 1000));
-    lastEloTickAt = nowMs;
-    if (deltaSec > 0) {
-      var ratePerMin = currentEloRatePerMinute(now);
-      eloPoints = Math.max(0, eloPoints + ratePerMin * (deltaSec / 60));
-      saveLocal();
-    }
-    renderEloMeter();
-    if (fbUser && nowMs - lastEloPushAt > 8000) pushEloNow();
+    if (fbUser && cloudReady && nowMs - lastEloPushAt > 8000) { pushEloNow(now); return; }
+    if (nowMs - lastEloTickAt > 8000) settleElo(now);
   }
 
   function renderToggle(){
@@ -2407,9 +2455,10 @@ input[type="time"], input[type="date"], select{
     els.chunkInfo.hidden = !isActive;
   }
 
-  function renderEloMeter(){
-    var info = getRankInfo(eloPoints);
-    var rate = currentEloRatePerMinute(new Date());
+  function renderEloMeter(now){
+    now = now || new Date();
+    var info = getRankInfo(liveElo(now));
+    var rate = currentEloRatePerMinute(now);
     var gaining = rate > 0;
 
     var c = RANK_COLORS[info.rankIndex] || RANK_COLORS[0];
@@ -2803,6 +2852,7 @@ input[type="time"], input[type="date"], select{
   /* ---------------- toggle button ---------------- */
   els.toggleBtn.addEventListener("click", function(){
     if (!active) {
+      settleElo(new Date());
       persistActive({ startTime: new Date().toISOString() });
       playSound("start");
       buzz(15);
@@ -2919,6 +2969,7 @@ input[type="time"], input[type="date"], select{
       journal: text
     };
     persistNewSession(session);
+    settleElo(endTime);
     persistActive(null);
     active = null;
     playSound("complete");
