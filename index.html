@@ -856,7 +856,7 @@ input[type="time"], input[type="date"], select{
 
     <section class="panel-section">
       <h3>Sync across devices</h3>
-      <p class="hint">Copy this code and paste it into Settings on another device to bring your data there. Applying a pasted code replaces that device's chunks and settings, so copy from here first if you don't want to lose anything on the device you're pasting into.</p>
+      <p class="hint">Copy this code and paste it into Settings on another device to bring your data there. Chunks from both devices are combined by applying a code, so nothing gets lost - only this device's settings, and an in-progress chunk if it doesn't already have one, are replaced by the pasted code.</p>
       <div class="field-row">
         <label for="syncCode">This device's code</label>
         <textarea id="syncCode" class="mono" rows="3" readonly></textarea>
@@ -1692,6 +1692,15 @@ input[type="time"], input[type="date"], select{
       return (data && typeof data === "object") ? data : null;
     } catch(e){ return null; }
   }
+  /* Union by id - a chunk from either side survives. On an id that exists
+     in both (the same chunk edited on two devices since the last sync),
+     the pasted copy wins, since applying a code is a deliberate action. */
+  function mergeSessionsById(local, pasted){
+    var byId = {};
+    (local || []).forEach(function(s){ byId[s.id] = s; });
+    (pasted || []).forEach(function(s){ byId[s.id] = s; });
+    return Object.keys(byId).map(function(id){ return byId[id]; });
+  }
 
   document.getElementById("syncCopyBtn").addEventListener("click", function(){
     var btn = this;
@@ -1718,17 +1727,18 @@ input[type="time"], input[type="date"], select{
     var data = decodeSyncCode(document.getElementById("syncPasteInput").value);
     if (!data) { errorEl.classList.add("show"); return; }
     errorEl.classList.remove("show");
-    showConfirm("This replaces this device's chunks and settings. This can't be undone.", { title: "Apply this sync code?", okLabel: "Replace" }).then(function(ok){
-      if (!ok) return;
-      settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings || {});
-      sessions = data.sessions || [];
-      active = data.active || null;
-      animatedChunkIds = {};
-      sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
-      saveLocal();
-      closeSettings();
-      renderAll();
-    });
+
+    var before = sessions.length;
+    settings = Object.assign(clone(DEFAULT_SETTINGS), data.settings || {});
+    sessions = mergeSessionsById(sessions, data.sessions || []);
+    active = active || data.active || null;
+    animatedChunkIds = {};
+    sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
+    saveLocal();
+    closeSettings();
+    renderAll();
+    var added = sessions.length - before;
+    showToast(added > 0 ? ("Synced - " + added + " new chunk" + (added === 1 ? "" : "s")) : "Synced - already up to date");
   });
 
   document.getElementById("settingsBtn").addEventListener("click", openSettings);
