@@ -1131,7 +1131,13 @@ input[type="time"], input[type="date"], select{
   }
   function signIn(){
     if (!auth) { showToast("Sign-in isn't available right now"); return; }
-    auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
+    try {
+      auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider()).catch(function(err){
+        showToast("Sign-in failed: " + (err && err.code ? err.code : "unknown error"));
+      });
+    } catch (err) {
+      showToast("Sign-in failed: " + (err && err.code ? err.code : "unknown error"));
+    }
   }
   function signOutUser(){ if (auth) auth.signOut(); }
 
