@@ -1709,13 +1709,16 @@ input[type="time"], input[type="date"], select{
   var eloPoints = 0;
   /* eloPoints is only meaningful together with the instant it was last
      settled as of - lastEloTickAt is that instant (ms epoch locally,
-     synced as the ISO string eloPointsAt). Every sync touchpoint below
-     compares THIS before ever adopting a fetched eloPoints, and only
-     adopts the fetch if it's the newer of the two: a number alone can't
-     say whose progress is more complete (decay legitimately goes down,
-     so "bigger" isn't "newer"), but a checkpoint time can be compared
-     unambiguously, and that's what actually decides which device's write
-     should win instead of whichever happened to push last. */
+     synced to Firestore as eloPointsAt via FieldValue.serverTimestamp() -
+     see eloPointsAtMillis - specifically the SERVER's clock, not this
+     device's own, so two devices with disagreeing clocks still compare
+     correctly). Every sync touchpoint below compares THIS before ever
+     adopting a fetched eloPoints, and only adopts the fetch if it's the
+     newer of the two: a number alone can't say whose progress is more
+     complete (decay legitimately goes down, so "bigger" isn't "newer"),
+     but a checkpoint time can be compared unambiguously, and that's what
+     actually decides which device's write should win instead of
+     whichever happened to push last. */
   var lastEloTickAt = Date.now();
   var lastEloPushAt = 0;
   /* Once true, this browser's eloPoints/lastEloTickAt is just a cache of
@@ -1870,20 +1873,40 @@ input[type="time"], input[type="date"], select{
   function freshGet(ref){
     return ref.get({ source: "server" }).catch(function(){ return ref.get(); });
   }
+  /* eloPointsAt is written as FieldValue.serverTimestamp() (see pushEloNow
+     and migrateAndAttach's batch write), which comes back as a Firestore
+     Timestamp object with its own .toMillis() - not a plain ISO string -
+     once the server has actually assigned it. Comparing checkpoints by
+     the SERVER's clock rather than each device's own is what makes the
+     recency check trustworthy across devices in the first place: two
+     devices' local clocks can disagree by anything from seconds to
+     minutes (wrong timezone, no network time sync, whatever), and
+     comparing client-stamped times would silently let a clock-skewed
+     device's older data outrank a genuinely newer write from another
+     device - the exact failure mode this whole mechanism exists to rule
+     out. Still accepts a plain ISO string as a fallback, for eloPointsAt
+     values written by an older build of this file before this switch. */
+  function eloPointsAtMillis(ts){
+    if (!ts) return null;
+    if (typeof ts.toMillis === "function") return ts.toMillis();
+    var t = new Date(ts).getTime();
+    return isNaN(t) ? null : t;
+  }
   /* eloPoints only means something alongside the instant it's accurate as
-     of (lastEloTickAt locally, synced as the ISO string eloPointsAt) - a
-     bare number can't say whose progress is more complete, since decay
-     legitimately brings it down too, so "bigger" isn't "newer". This is
-     the one place a fetched eloPoints is allowed to overwrite the local
-     value, and only when its checkpoint is actually newer, which is what
-     makes it safe regardless of which device pushed last, whether a read
-     came from cache or server, or how long a tab sat backgrounded. A
-     missing eloPointsAt (a doc written before this checkpoint existed)
-     is treated as "now" so old-format cloud data is trusted once, then
-     naturally superseded by real checkpoints from here on. */
+     of (lastEloTickAt locally, eloPointsAt in Firestore) - a bare number
+     can't say whose progress is more complete, since decay legitimately
+     brings it down too, so "bigger" isn't "newer". This is the one place
+     a fetched eloPoints is allowed to overwrite the local value, and only
+     when its checkpoint is actually newer, which is what makes it safe
+     regardless of which device pushed last, whether a read came from
+     cache or server, or how long a tab sat backgrounded. A missing
+     eloPointsAt (a doc written before this checkpoint existed) is treated
+     as "now" so old-format cloud data is trusted once, then naturally
+     superseded by real checkpoints from here on. */
   function adoptEloCheckpoint(data){
     if (typeof data.eloPoints !== "number") return;
-    var incomingAt = data.eloPointsAt ? new Date(data.eloPointsAt).getTime() : Date.now();
+    var incomingAt = eloPointsAtMillis(data.eloPointsAt);
+    if (incomingAt === null) incomingAt = Date.now();
     if (incomingAt <= lastEloTickAt) return;
     eloPoints = data.eloPoints;
     lastEloTickAt = incomingAt;
@@ -1921,7 +1944,7 @@ input[type="time"], input[type="date"], select{
           adoptEloCheckpoint(cloudMeta);
         } else if (cloudMeta.eloPoints > eloPoints) {
           eloPoints = cloudMeta.eloPoints;
-          lastEloTickAt = cloudMeta.eloPointsAt ? new Date(cloudMeta.eloPointsAt).getTime() : Date.now();
+          lastEloTickAt = eloPointsAtMillis(cloudMeta.eloPointsAt) || Date.now();
         }
       }
       eloLinked = true;
@@ -1933,7 +1956,7 @@ input[type="time"], input[type="date"], select{
 
       var batch = db.batch();
       sessions.forEach(function(s){ batch.set(userSessionsCol().doc(s.id), s); });
-      batch.set(userMetaDoc(), { settings: settings, active: active, eloPoints: eloPoints, eloPointsAt: new Date(lastEloTickAt).toISOString() }, { merge: true });
+      batch.set(userMetaDoc(), { settings: settings, active: active, eloPoints: eloPoints, eloPointsAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
       return batch.commit();
     }).catch(function(){}).then(function(){
       cloudReady = true;
@@ -2416,17 +2439,17 @@ input[type="time"], input[type="date"], select{
   /* Pushes the checkpoint to Firestore right now, bypassing the tick
      throttle - used at chunk start/end so the moments you'd actually
      go check another device don't have to wait out the timer. Sends
-     eloPointsAt alongside it (see adoptEloCheckpoint) so whichever device
-     reads this later can tell whether it's actually newer than what it
-     already has. Logs failures instead of swallowing them, so a sync
-     problem is at least visible in the console rather than silently
+     eloPointsAt as FieldValue.serverTimestamp() (see eloPointsAtMillis)
+     so whichever device reads this later is comparing the server's clock,
+     not this device's own. Logs failures instead of swallowing them, so a
+     sync problem is at least visible in the console rather than silently
      invisible. */
   function pushEloNow(now){
     if (!fbUser || !cloudReady) return;
     now = now || new Date();
     settleElo(now);
     lastEloPushAt = now.getTime();
-    userMetaDoc().set({ eloPoints: eloPoints, eloPointsAt: new Date(lastEloTickAt).toISOString() }, { merge: true }).catch(function(err){
+    userMetaDoc().set({ eloPoints: eloPoints, eloPointsAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }).catch(function(err){
       console.error("ELO sync failed:", err);
     });
   }
