@@ -1743,15 +1743,29 @@ input[type="time"], input[type="date"], select{
   function saveLocal(){
     try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: settings, sessions: sessions, active: active, eloEpochPoints: eloEpochPoints, eloEpochAt: new Date(eloEpochAtMs).toISOString() })); } catch(e){}
   }
+  /* Parses a date-ish value (ISO string, Firestore Timestamp with its own
+     .toMillis(), whatever) into epoch ms, or null if it's missing or
+     doesn't actually parse - never NaN. A single bad value silently
+     poisons every arithmetic thing downstream (NaN propagates through +,
+     Math.max, comparisons all quietly become false), so every date read
+     that feeds the ELO computation goes through this rather than a bare
+     new Date(x).getTime(). */
+  function parseMs(v){
+    if (!v) return null;
+    if (typeof v.toMillis === "function") return v.toMillis();
+    var t = new Date(v).getTime();
+    return isFinite(t) ? t : null;
+  }
   (function bootLocal(){
     var l = loadLocal();
     if (l.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), l.settings));
     if (l.sessions) sessions = l.sessions;
     if (l.active) active = l.active;
-    if (typeof l.eloEpochPoints === "number" && l.eloEpochAt) {
+    var epochAt = parseMs(l.eloEpochAt);
+    if (typeof l.eloEpochPoints === "number" && isFinite(l.eloEpochPoints) && epochAt !== null) {
       eloEpochPoints = l.eloEpochPoints;
-      eloEpochAtMs = new Date(l.eloEpochAt).getTime();
-    } else if (typeof l.eloPoints === "number") {
+      eloEpochAtMs = epochAt;
+    } else if (typeof l.eloPoints === "number" && isFinite(l.eloPoints)) {
       /* Pre-migration localStorage, from before ELO became derived - seed
          the epoch with whatever this device's old running total was, as
          of whenever it was last settled, so existing progress carries
@@ -1759,7 +1773,7 @@ input[type="time"], input[type="date"], select{
          that instant forward is then computed fresh from sessions/active/
          settings, same as any other device. */
       eloEpochPoints = l.eloPoints;
-      eloEpochAtMs = l.eloPointsAt ? new Date(l.eloPointsAt).getTime() : Date.now();
+      eloEpochAtMs = parseMs(l.eloPointsAt) || Date.now();
     }
   })();
 
@@ -1848,27 +1862,18 @@ input[type="time"], input[type="date"], select{
   function freshGet(ref){
     return ref.get({ source: "server" }).catch(function(){ return ref.get(); });
   }
-  /* eloEpochAt is written as FieldValue.serverTimestamp(), which comes
-     back as a Firestore Timestamp object with its own .toMillis() - not a
-     plain ISO string - once the server has assigned it. Still accepts a
-     plain ISO string as a fallback, for the old per-tick eloPointsAt
-     values a previous build of this file used to write. */
-  function tsMillis(ts){
-    if (!ts) return null;
-    if (typeof ts.toMillis === "function") return ts.toMillis();
-    var t = new Date(ts).getTime();
-    return isNaN(t) ? null : t;
-  }
   /* The ELO epoch, once established for an account, never changes again -
      see migrateAndAttach - so there's no recency check needed here, unlike
      the old per-tick eloPoints this replaced: whichever value is on the
      server simply IS the shared baseline. This only matters for the rare
      case where two devices raced to establish it independently (see
      migrateAndAttach) - whichever write actually stuck becomes visible
-     here and both devices converge on it. */
+     here and both devices converge on it. eloEpochAt comes back as a
+     Firestore Timestamp object (FieldValue.serverTimestamp() resolved),
+     which parseMs handles via its own .toMillis(). */
   function adoptEloEpoch(data){
-    if (typeof data.eloEpochPoints !== "number" || !data.eloEpochAt) return;
-    var at = tsMillis(data.eloEpochAt);
+    if (typeof data.eloEpochPoints !== "number" || !isFinite(data.eloEpochPoints)) return;
+    var at = parseMs(data.eloEpochAt);
     if (at === null) return;
     eloEpochPoints = data.eloEpochPoints;
     eloEpochAtMs = at;
@@ -1915,8 +1920,9 @@ input[type="time"], input[type="date"], select{
       if (epochExists) {
         adoptEloEpoch(cloudMeta);
       } else {
-        var legacyCloud = (cloudMeta && typeof cloudMeta.eloPoints === "number") ? cloudMeta.eloPoints : 0;
-        eloEpochPoints = Math.max(eloEpochPoints, legacyCloud, 0);
+        var legacyCloud = (cloudMeta && typeof cloudMeta.eloPoints === "number" && isFinite(cloudMeta.eloPoints)) ? cloudMeta.eloPoints : 0;
+        var legacyLocal = isFinite(eloEpochPoints) ? eloEpochPoints : 0;
+        eloEpochPoints = Math.max(legacyLocal, legacyCloud, 0);
         eloEpochAtMs = Date.now();
       }
 
@@ -2377,11 +2383,15 @@ input[type="time"], input[type="date"], select{
 
   /* Whether a chunk (completed or the one still running) covers the
      instant `ms` - the "active" half of the rate table, extended over
-     history instead of just the live now. */
+     history instead of just the live now. Sessions with an unparseable
+     startTime/endTime (never written by this app, but data can outlive
+     the code that wrote it) just don't match rather than poisoning the
+     comparison with NaN. */
   function sessionCoversMs(ms){
     for (var i = 0; i < sessions.length; i++) {
       var s = sessions[i];
-      if (ms >= new Date(s.startTime).getTime() && ms < new Date(s.endTime).getTime()) return true;
+      var st = parseMs(s.startTime), en = parseMs(s.endTime);
+      if (st !== null && en !== null && ms >= st && ms < en) return true;
     }
     return false;
   }
@@ -2394,25 +2404,32 @@ input[type="time"], input[type="date"], select{
      number: it needs nothing written anywhere to compute, since sessions
      merge safely by id and active/settings only change via explicit,
      infrequent user actions - there's no number left for two devices to
-     race over the way eloPoints once was. */
+     race over the way eloPoints once was.
+
+     Every boundary goes through parseMs and is skipped if it doesn't
+     parse, rather than feeding a NaN into the sweep - one bad date would
+     otherwise turn the whole sum, and everything built on it, into NaN
+     (NaN poisons +, Math.max, and every comparison silently). */
   function accruedElo(fromMs, toMs){
-    if (toMs <= fromMs) return 0;
+    if (!isFinite(fromMs) || !isFinite(toMs) || toMs <= fromMs) return 0;
     var points = [fromMs, toMs];
     function clip(a, b){
+      if (a === null || b === null) return;
       if (b > fromMs && a < toMs) { points.push(Math.max(a, fromMs)); points.push(Math.min(b, toMs)); }
     }
-    sessions.forEach(function(s){ clip(new Date(s.startTime).getTime(), new Date(s.endTime).getTime()); });
-    if (active) clip(new Date(active.startTime).getTime(), toMs);
+    sessions.forEach(function(s){ clip(parseMs(s.startTime), parseMs(s.endTime)); });
+    if (active) clip(parseMs(active.startTime), toMs);
     (settings.doubleWindows || []).forEach(function(w){
-      if (w.startAt && w.endAt) clip(new Date(w.startAt).getTime(), new Date(w.endAt).getTime());
+      clip(parseMs(w.startAt), parseMs(w.endAt));
     });
     points.sort(function(a, b){ return a - b; });
+    var activeStart = active ? parseMs(active.startTime) : null;
     var total = 0;
     for (var i = 0; i < points.length - 1; i++) {
       var segStart = points[i], segEnd = points[i + 1];
       if (segEnd <= segStart) continue;
       var mid = (segStart + segEnd) / 2;
-      var isActiveHere = sessionCoversMs(mid) || (active && mid >= new Date(active.startTime).getTime());
+      var isActiveHere = sessionCoversMs(mid) || (activeStart !== null && mid >= activeStart);
       var inWindow = isInDoubleWindow(new Date(mid), settings);
       var rate = isActiveHere ? (inWindow ? 2 : 1) : (inWindow ? -0.5 : -0.1);
       total += rate * ((segEnd - segStart) / 60000);
@@ -2421,13 +2438,18 @@ input[type="time"], input[type="date"], select{
   }
   /* The live displayed ELO: the epoch baseline plus everything accrued
      since, purely computed - no state mutated, nothing pushed, nothing to
-     reconcile. Two devices with different session/active/settings state
-     would show different numbers here, but that's just them not being
-     synced yet on the underlying data (which the listener/resync above
-     already handle) - once those agree, this is identical on every
-     device by construction, not by comparing timestamps and hoping. */
+     reconcile. isFinite on the epoch itself is a last-resort backstop -
+     every actual writer of eloEpochPoints already validates it, but a
+     display function is the wrong place to ever show "NaN ELO" even if
+     some future bug slips one through. Two devices with different
+     session/active/settings state would show different numbers here, but
+     that's just them not being synced yet on the underlying data (which
+     the listener/resync above already handle) - once those agree, this is
+     identical on every device by construction, not by comparing
+     timestamps and hoping. */
   function liveElo(now){
-    return Math.max(0, eloEpochPoints + accruedElo(eloEpochAtMs, now.getTime()));
+    var base = isFinite(eloEpochPoints) ? eloEpochPoints : 0;
+    return Math.max(0, base + accruedElo(eloEpochAtMs, now.getTime()));
   }
   function tickElo(now){
     renderEloMeter(now);
