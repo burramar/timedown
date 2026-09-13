@@ -1551,6 +1551,42 @@ input[type="time"], input[type="date"], select{
     if ((routine.days||[]).indexOf(weekday) === -1) return null;
     return { start: routine.start, end: routine.end };
   }
+  /* Resolves a school block (see getSchoolBlock) to actual start/end
+     Dates anchored to the given cycle day, handling the same cross-
+     midnight case getAvailableSecForDay does (a block whose end time is
+     numerically before its start, e.g. an evening class). Returns null if
+     no school block applies that day. */
+  function schoolBlockRange(cycleStart, settings){
+    var school = getSchoolBlock(cycleStart, settings);
+    if (!school) return null;
+    var start = combine(cycleStart, parseHM(school.start));
+    var end = combine(cycleStart, parseHM(school.end));
+    if (end <= start) end = addDays(end, 1);
+    return { start: start, end: end };
+  }
+  /* True if `now` falls inside that day's school block - the one place
+     "is it school hours right now" gets decided, so the live rate
+     (currentEloRatePerMinute) and the historical sweep (accruedElo, via
+     schoolRangesBetween) can't disagree on what counts. */
+  function isInSchoolHours(now, settings){
+    var range = schoolBlockRange(getCycle(now, settings).cycleStart, settings);
+    return !!range && now >= range.start && now < range.end;
+  }
+  /* Every school block whose range overlaps [fromMs, toMs], as {start,end}
+     ms pairs - walks one app-day at a time (school blocks are a per-day
+     schedule, not a fixed recurring time-of-day independent of the date,
+     since schoolOverrides can change any single day's block or cancel it
+     outright) starting from the day fromMs falls in. */
+  function schoolRangesBetween(fromMs, toMs, settings){
+    var ranges = [];
+    var day = getCycle(new Date(fromMs), settings).cycleStart;
+    while (day.getTime() < toMs) {
+      var range = schoolBlockRange(day, settings);
+      if (range) ranges.push({ start: range.start.getTime(), end: range.end.getTime() });
+      day = addDays(day, 1);
+    }
+    return ranges;
+  }
 
   /* Like getCycle, but for a specific calendar day rather than "now" -
      used to look at past days for stats. */
@@ -1700,13 +1736,17 @@ input[type="time"], input[type="date"], select{
      (currentEloRatePerMinute, driven by the live active/now) and the
      historical sweep (accruedElo, driven by whether a session covered
      some past instant) need the exact same table, so a future rate
-     tweak can't be made in one and forgotten in the other. */
-  function eloRateFor(isActiveNow, inWindow){
+     tweak can't be made in one and forgotten in the other. School hours
+     override everything else - ELO is meant to be completely frozen
+     during class, not just decaying slower, so it's checked first and
+     short-circuits before active/window even matter. */
+  function eloRateFor(isActiveNow, inWindow, inSchool){
+    if (inSchool) return 0;
     if (isActiveNow) return inWindow ? 2 : 1;
     return inWindow ? -0.5 : -0.3;
   }
   function currentEloRatePerMinute(now){
-    return eloRateFor(!!active, isInDoubleWindow(now, settings));
+    return eloRateFor(!!active, isInDoubleWindow(now, settings), isInSchoolHours(now, settings));
   }
 
   /* ---------------- storage (this device only) ---------------- */
@@ -2433,14 +2473,15 @@ input[type="time"], input[type="date"], select{
   }
   /* Sums decay/gain between fromMs and toMs by sweeping every point where
      the rate could change - a session boundary (completed, or the one
-     currently in progress, open-ended up to toMs) or a double-window
-     boundary - so each resulting sub-interval sees exactly one,
-     unambiguous rate (via eloRateFor, the same table currentEloRatePerMinute
-     uses). This is what liveElo below adds to the epoch instead of a
-     continuously ticked number: it needs nothing written anywhere to
-     compute, since sessions merge safely by id and active/settings only
-     change via explicit, infrequent user actions - there's no number left
-     for two devices to race over the way eloPoints once was.
+     currently in progress, open-ended up to toMs), a double-window
+     boundary, or a school-hours boundary - so each resulting sub-interval
+     sees exactly one, unambiguous rate (via eloRateFor, the same table
+     currentEloRatePerMinute uses). This is what liveElo below adds to the
+     epoch instead of a continuously ticked number: it needs nothing
+     written anywhere to compute, since sessions merge safely by id and
+     active/settings only change via explicit, infrequent user actions -
+     there's no number left for two devices to race over the way
+     eloPoints once was.
 
      Every boundary goes through parseMs and is skipped if it doesn't
      parse, rather than feeding a NaN into the sweep - one bad date would
@@ -2458,6 +2499,7 @@ input[type="time"], input[type="date"], select{
     (settings.doubleWindows || []).forEach(function(w){
       clip(parseMs(w.startAt), parseMs(w.endAt));
     });
+    schoolRangesBetween(fromMs, toMs, settings).forEach(function(r){ clip(r.start, r.end); });
     points.sort(function(a, b){ return a - b; });
     var activeStart = active ? parseMs(active.startTime) : null;
     var total = 0;
@@ -2467,7 +2509,8 @@ input[type="time"], input[type="date"], select{
       var mid = (segStart + segEnd) / 2;
       var isActiveHere = sessionCoversMs(mid) || (activeStart !== null && mid >= activeStart);
       var inWindow = isInDoubleWindow(new Date(mid), settings);
-      var rate = eloRateFor(isActiveHere, inWindow);
+      var inSchool = isInSchoolHours(new Date(mid), settings);
+      var rate = eloRateFor(isActiveHere, inWindow, inSchool);
       total += rate * ((segEnd - segStart) / 60000);
     }
     return total;
@@ -2506,6 +2549,11 @@ input[type="time"], input[type="date"], select{
     var info = getRankInfo(liveElo(now));
     var rate = currentEloRatePerMinute(now);
     var gaining = rate > 0;
+    /* School hours freeze the rate at exactly 0 (see eloRateFor) - that's
+       neither a gain nor a loss, so it shouldn't wear the "lose" color
+       just because it isn't positive; the base .elo-rate style with
+       neither class is the neutral state. */
+    var frozen = rate === 0;
 
     var c = RANK_COLORS[info.rankIndex] || RANK_COLORS[0];
     /* c.dark reads fine on the card's light-mode surface but would be
@@ -2528,9 +2576,9 @@ input[type="time"], input[type="date"], select{
     els.eloDivName.textContent = info.isMax ? "MAX" : info.divName;
     els.eloRate.textContent = (gaining ? "+" : "") + rate.toFixed(1) + "/min";
     els.eloRate.classList.toggle("gain", gaining);
-    els.eloRate.classList.toggle("lose", !gaining);
+    els.eloRate.classList.toggle("lose", !gaining && !frozen);
     els.eloBarFill.style.width = (info.progressInDiv * 100) + "%";
-    els.eloBarFill.classList.toggle("lose", !gaining);
+    els.eloBarFill.classList.toggle("lose", !gaining && !frozen);
     els.eloPointsText.textContent = Math.round(info.elo) + " ELO";
     els.eloNextText.textContent = info.isMax ? "top rank" : (Math.ceil(info.pointsToNextDiv) + " to next");
 
