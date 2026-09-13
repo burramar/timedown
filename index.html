@@ -1942,7 +1942,36 @@ input[type="time"], input[type="date"], select{
       return batch.commit();
     }).catch(function(){}).then(function(){
       cloudReady = true;
+      applyEloCorrection();
       attachCloud();
+    });
+  }
+  /* One-time manual correction for an account whose epoch got seeded with
+     a wrong baseline before this design existed - the epoch is otherwise
+     permanent, so a bad one-time seed has no way to self-correct through
+     normal use. Triggered by opening the app with ?setElo=<number> in the
+     URL once, signed in; forces a fresh epoch to that value regardless of
+     whatever migrateAndAttach just established or adopted above, then
+     clears the pending value so it can't misfire again on a later reload
+     that happens to keep the same URL. Not a general admin panel - just
+     the least-bad way to reach into a specific account's data without
+     direct database access. */
+  var pendingEloCorrection = (function(){
+    var m = /[?&]setElo=([0-9.]+)/.exec(location.search);
+    return m ? parseFloat(m[1]) : null;
+  })();
+  function applyEloCorrection(){
+    if (pendingEloCorrection === null || !isFinite(pendingEloCorrection)) return;
+    var value = pendingEloCorrection;
+    pendingEloCorrection = null;
+    eloEpochPoints = value;
+    eloEpochAtMs = Date.now();
+    saveLocal();
+    renderAll();
+    userMetaDoc().set({ eloEpochPoints: eloEpochPoints, eloEpochAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }).then(function(){
+      showToast("ELO manually set to " + Math.round(eloEpochPoints));
+    }).catch(function(){
+      showToast("ELO correction failed to sync - check console");
     });
   }
   function renderAccountStatus(){
