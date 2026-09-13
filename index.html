@@ -1080,7 +1080,7 @@ input[type="time"], input[type="date"], select{
         <span class="elo-rank-name" id="eloRankName">Copper</span>
         <span class="elo-div-pill" id="eloDivName">I</span>
       </div>
-      <span class="elo-rate" id="eloRate">-0.1/min</span>
+      <span class="elo-rate" id="eloRate">-0.3/min</span>
     </div>
     <div class="elo-bar-track">
       <div class="elo-bar-fill" id="eloBarFill"></div>
@@ -1583,9 +1583,9 @@ input[type="time"], input[type="date"], select{
   }
 
   /* ---------------- rank / ELO ----------------
-     +1 ELO/min while in a chunk, -0.1/min otherwise; doubled to +2/-0.5
-     inside the double window. Each rank's point span grows superlinearly
-     so later ranks take dramatically longer than early ones. */
+     +1 ELO/min while in a chunk, -0.3/min otherwise; +2/-0.5 inside the
+     double window. Each rank's point span grows superlinearly so later
+     ranks take dramatically longer than early ones. */
   var RANKS = ["Copper","Iron","Quartz","Titanium","Obsidian","Emerald","Sapphire","Alexandrite","Painite"];
   var DIVISIONS = ["I","II","III"];
 
@@ -1696,10 +1696,17 @@ input[type="time"], input[type="date"], select{
     }
     return count;
   }
+  /* The one place the actual rate numbers live - both the live rate
+     (currentEloRatePerMinute, driven by the live active/now) and the
+     historical sweep (accruedElo, driven by whether a session covered
+     some past instant) need the exact same table, so a future rate
+     tweak can't be made in one and forgotten in the other. */
+  function eloRateFor(isActiveNow, inWindow){
+    if (isActiveNow) return inWindow ? 2 : 1;
+    return inWindow ? -0.5 : -0.3;
+  }
   function currentEloRatePerMinute(now){
-    var inWindow = isInDoubleWindow(now, settings);
-    if (active) return inWindow ? 2 : 1;
-    return inWindow ? -0.5 : -0.1;
+    return eloRateFor(!!active, isInDoubleWindow(now, settings));
   }
 
   /* ---------------- storage (this device only) ---------------- */
@@ -2428,12 +2435,12 @@ input[type="time"], input[type="date"], select{
      the rate could change - a session boundary (completed, or the one
      currently in progress, open-ended up to toMs) or a double-window
      boundary - so each resulting sub-interval sees exactly one,
-     unambiguous rate (mirroring currentEloRatePerMinute's table). This is
-     what liveElo below adds to the epoch instead of a continuously ticked
-     number: it needs nothing written anywhere to compute, since sessions
-     merge safely by id and active/settings only change via explicit,
-     infrequent user actions - there's no number left for two devices to
-     race over the way eloPoints once was.
+     unambiguous rate (via eloRateFor, the same table currentEloRatePerMinute
+     uses). This is what liveElo below adds to the epoch instead of a
+     continuously ticked number: it needs nothing written anywhere to
+     compute, since sessions merge safely by id and active/settings only
+     change via explicit, infrequent user actions - there's no number left
+     for two devices to race over the way eloPoints once was.
 
      Every boundary goes through parseMs and is skipped if it doesn't
      parse, rather than feeding a NaN into the sweep - one bad date would
@@ -2460,7 +2467,7 @@ input[type="time"], input[type="date"], select{
       var mid = (segStart + segEnd) / 2;
       var isActiveHere = sessionCoversMs(mid) || (activeStart !== null && mid >= activeStart);
       var inWindow = isInDoubleWindow(new Date(mid), settings);
-      var rate = isActiveHere ? (inWindow ? 2 : 1) : (inWindow ? -0.5 : -0.1);
+      var rate = eloRateFor(isActiveHere, inWindow);
       total += rate * ((segEnd - segStart) / 60000);
     }
     return total;
