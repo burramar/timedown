@@ -1706,29 +1706,22 @@ input[type="time"], input[type="date"], select{
   var settings = DEFAULT_SETTINGS;
   var sessions = [];
   var active = null;
-  var eloPoints = 0;
-  /* eloPoints is only meaningful together with the instant it was last
-     settled as of - lastEloTickAt is that instant (ms epoch locally,
-     synced to Firestore as eloPointsAt via FieldValue.serverTimestamp() -
-     see eloPointsAtMillis - specifically the SERVER's clock, not this
-     device's own, so two devices with disagreeing clocks still compare
-     correctly). Every sync touchpoint below compares THIS before ever
-     adopting a fetched eloPoints, and only adopts the fetch if it's the
-     newer of the two: a number alone can't say whose progress is more
-     complete (decay legitimately goes down, so "bigger" isn't "newer"),
-     but a checkpoint time can be compared unambiguously, and that's what
-     actually decides which device's write should win instead of
-     whichever happened to push last. */
-  var lastEloTickAt = Date.now();
-  var lastEloPushAt = 0;
-  /* Once true, this browser's eloPoints/lastEloTickAt is just a cache of
-     the shared cloud checkpoint and cold starts should compare it by
-     recency (above). Before the first successful link, eloPoints may
-     instead hold this device's own pre-sign-in history with no shared
-     checkpoint to compare against yet - recency is meaningless there, so
-     that one time only, migrateAndAttach folds it in via Math.max instead
-     (see there for why max, not sum, is the right one-time merge). */
-  var eloLinked = false;
+  /* ELO is derived, not stored as a running total - see accruedElo/liveElo
+     further down. The only thing actually synced for it is a one-time
+     baseline (eloEpochPoints as of eloEpochAtMs) captured once per
+     account, the moment some device first finds no baseline anywhere yet
+     (see migrateAndAttach). From then on every device computes the SAME
+     live ELO from the SAME already-safely-synced inputs - sessions (which
+     merge by id, so two devices adding different ones can never conflict),
+     active, and settings.doubleWindows - plus real elapsed time. There's
+     no continuously-written number left for two devices to race over,
+     which is what every previous fix to this file's ELO sync was really
+     fighting: a fresh read, a recency check, even a server-assigned
+     timestamp all still depended on trusting whichever write happened to
+     be newest. Deriving the number instead removes the race itself rather
+     than refereeing it better. */
+  var eloEpochPoints = 0;
+  var eloEpochAtMs = Date.now();
 
   /* One-time upgrade from the old single-commitment shape (doubleWindow
      carrying its own startAt/endAt) to the new array (doubleWindows) -
@@ -1748,16 +1741,26 @@ input[type="time"], input[type="date"], select{
     try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch(e){ return {}; }
   }
   function saveLocal(){
-    try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: settings, sessions: sessions, active: active, eloPoints: eloPoints, eloPointsAt: new Date(lastEloTickAt).toISOString(), eloLinked: eloLinked })); } catch(e){}
+    try { localStorage.setItem(LS_KEY, JSON.stringify({ settings: settings, sessions: sessions, active: active, eloEpochPoints: eloEpochPoints, eloEpochAt: new Date(eloEpochAtMs).toISOString() })); } catch(e){}
   }
   (function bootLocal(){
     var l = loadLocal();
     if (l.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), l.settings));
     if (l.sessions) sessions = l.sessions;
     if (l.active) active = l.active;
-    if (typeof l.eloPoints === "number") eloPoints = l.eloPoints;
-    if (l.eloPointsAt) lastEloTickAt = new Date(l.eloPointsAt).getTime();
-    if (l.eloLinked) eloLinked = true;
+    if (typeof l.eloEpochPoints === "number" && l.eloEpochAt) {
+      eloEpochPoints = l.eloEpochPoints;
+      eloEpochAtMs = new Date(l.eloEpochAt).getTime();
+    } else if (typeof l.eloPoints === "number") {
+      /* Pre-migration localStorage, from before ELO became derived - seed
+         the epoch with whatever this device's old running total was, as
+         of whenever it was last settled, so existing progress carries
+         over exactly once instead of restarting at 0. Everything from
+         that instant forward is then computed fresh from sessions/active/
+         settings, same as any other device. */
+      eloEpochPoints = l.eloPoints;
+      eloEpochAtMs = l.eloPointsAt ? new Date(l.eloPointsAt).getTime() : Date.now();
+    }
   })();
 
   /* Sessions already on disk at boot don't replay the day-bar "new chunk"
@@ -1780,36 +1783,8 @@ input[type="time"], input[type="date"], select{
     appId: "1:1028922551329:web:0db73ad6055b5e3dfd8760"
   };
   var auth = null, db = null, storage = null, fbUser = null;
-  /* True only once migrateAndAttach's local<->cloud merge has landed.
-     Guards every push to Firestore - without it, the per-second tick loop
-     (whose own push throttle starts at 0, so it's eligible immediately)
-     can push a freshly-booted device's stale local ELO before the merge
-     has a chance to reconcile it against the real cloud value, clobbering
-     real progress with whatever this device happened to have on disk. */
+  /* True only once migrateAndAttach's local<->cloud merge has landed. */
   var cloudReady = false;
-  /* True while re-fetching straight from the server after the tab comes
-     back from being hidden (see the visibilitychange handler below).
-     Guards tickElo the same way cloudReady guards sign-in: without it, a
-     tab that's been backgrounded for a while resumes ticking on whatever
-     stale active/eloPoints it had in memory from before it was hidden
-     (mobile browsers throttle timers and the Firestore listener's network
-     activity while hidden, so that memory can be well out of date) and
-     can push that stale value before the fresh server read lands. */
-  var resyncingAfterHidden = false;
-  /* False until it's actually safe to bank (settle) the local ELO
-     checkpoint - i.e. once we know whether there's cloud data to compare
-     it against first. Without this, tickElo settling on its very first,
-     synchronous call (from the renderAll() at the bottom of this script,
-     which runs before Firebase Auth has even resolved) stamps
-     lastEloTickAt to "now" well before migrateAndAttach's async fetch
-     gets a chance to run adoptEloCheckpoint - and once the local
-     checkpoint is stamped "now", no cloud checkpoint (necessarily from
-     some moment before now) could ever be judged newer again, silently
-     defeating the recency check on every single cold start. Set true
-     once we know the answer either way: immediately if there's no auth
-     at all, immediately on a signed-out auth state, or once
-     migrateAndAttach's reconciliation has actually landed. */
-  var eloSettleReady = false;
   var unsubSessions = null, unsubMeta = null;
   try {
     firebase.initializeApp(firebaseConfig);
@@ -1818,7 +1793,6 @@ input[type="time"], input[type="date"], select{
     db.enablePersistence({ synchronizeTabs: true }).catch(function(){});
     storage = firebase.storage();
   } catch (e) { /* SDK blocked or unavailable - app still works locally */ }
-  if (!auth) eloSettleReady = true;
 
   function userSessionsCol(){ return db.collection("users").doc(fbUser.uid).collection("sessions"); }
   function userMetaDoc(){ return db.collection("users").doc(fbUser.uid).collection("meta").doc("state"); }
@@ -1839,12 +1813,11 @@ input[type="time"], input[type="date"], select{
   }
   /* onSnapshot fires immediately with whatever's in this device's own local
      Firestore cache (metadata.fromCache = true) before the server has had a
-     chance to weigh in, then fires again once it does. On a device that
-     hasn't synced in a while, that first, cache-only event can be older than
-     what migrateAndAttach just reconciled moments earlier. Skipping
-     fromCache events means only server-confirmed data ever reaches
-     adoptEloCheckpoint, at the cost of not live-updating while offline -
-     a fair trade against acting on a guess. */
+     chance to weigh in, then fires again once it does. Skipping fromCache
+     events means only server-confirmed sessions/active/settings ever land
+     here - and since ELO is computed fresh from those on every render (see
+     liveElo), that's the only freshness guarantee it needs either; there's
+     no separate ELO field left to go stale or need its own reconciliation. */
   function attachCloud(){
     unsubSessions = userSessionsCol().onSnapshot(function(snap){
       if (snap.metadata.fromCache) return;
@@ -1858,7 +1831,7 @@ input[type="time"], input[type="date"], select{
       var data = doc.data();
       if (data.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), data.settings));
       if ("active" in data) active = data.active || null;
-      adoptEloCheckpoint(data);
+      adoptEloEpoch(data);
       saveLocal();
       renderAll();
     }, function(){});
@@ -1867,60 +1840,58 @@ input[type="time"], input[type="date"], select{
      resolve straight from this device's own local IndexedDB cache instead
      of reaching the server - especially right at startup, before the
      backend stream is even connected. Forcing a server read here (falling
-     back to cache only if actually offline) keeps that first read honest;
-     adoptEloCheckpoint below is what actually makes it safe even if a
-     stale read slips through anyway. */
+     back to cache only if actually offline) is what makes migrateAndAttach's
+     "does an epoch already exist" check trustworthy - a stale cache read
+     could otherwise say no when the real answer is yes, and two devices
+     both establishing their own epoch is exactly the race this whole
+     design exists to avoid needing to referee. */
   function freshGet(ref){
     return ref.get({ source: "server" }).catch(function(){ return ref.get(); });
   }
-  /* eloPointsAt is written as FieldValue.serverTimestamp() (see pushEloNow
-     and migrateAndAttach's batch write), which comes back as a Firestore
-     Timestamp object with its own .toMillis() - not a plain ISO string -
-     once the server has actually assigned it. Comparing checkpoints by
-     the SERVER's clock rather than each device's own is what makes the
-     recency check trustworthy across devices in the first place: two
-     devices' local clocks can disagree by anything from seconds to
-     minutes (wrong timezone, no network time sync, whatever), and
-     comparing client-stamped times would silently let a clock-skewed
-     device's older data outrank a genuinely newer write from another
-     device - the exact failure mode this whole mechanism exists to rule
-     out. Still accepts a plain ISO string as a fallback, for eloPointsAt
-     values written by an older build of this file before this switch. */
-  function eloPointsAtMillis(ts){
+  /* eloEpochAt is written as FieldValue.serverTimestamp(), which comes
+     back as a Firestore Timestamp object with its own .toMillis() - not a
+     plain ISO string - once the server has assigned it. Still accepts a
+     plain ISO string as a fallback, for the old per-tick eloPointsAt
+     values a previous build of this file used to write. */
+  function tsMillis(ts){
     if (!ts) return null;
     if (typeof ts.toMillis === "function") return ts.toMillis();
     var t = new Date(ts).getTime();
     return isNaN(t) ? null : t;
   }
-  /* eloPoints only means something alongside the instant it's accurate as
-     of (lastEloTickAt locally, eloPointsAt in Firestore) - a bare number
-     can't say whose progress is more complete, since decay legitimately
-     brings it down too, so "bigger" isn't "newer". This is the one place
-     a fetched eloPoints is allowed to overwrite the local value, and only
-     when its checkpoint is actually newer, which is what makes it safe
-     regardless of which device pushed last, whether a read came from
-     cache or server, or how long a tab sat backgrounded. A missing
-     eloPointsAt (a doc written before this checkpoint existed) is treated
-     as "now" so old-format cloud data is trusted once, then naturally
-     superseded by real checkpoints from here on. */
-  function adoptEloCheckpoint(data){
-    if (typeof data.eloPoints !== "number") return;
-    var incomingAt = eloPointsAtMillis(data.eloPointsAt);
-    if (incomingAt === null) incomingAt = Date.now();
-    if (incomingAt <= lastEloTickAt) return;
-    eloPoints = data.eloPoints;
-    lastEloTickAt = incomingAt;
+  /* The ELO epoch, once established for an account, never changes again -
+     see migrateAndAttach - so there's no recency check needed here, unlike
+     the old per-tick eloPoints this replaced: whichever value is on the
+     server simply IS the shared baseline. This only matters for the rare
+     case where two devices raced to establish it independently (see
+     migrateAndAttach) - whichever write actually stuck becomes visible
+     here and both devices converge on it. */
+  function adoptEloEpoch(data){
+    if (typeof data.eloEpochPoints !== "number" || !data.eloEpochAt) return;
+    var at = tsMillis(data.eloEpochAt);
+    if (at === null) return;
+    eloEpochPoints = data.eloEpochPoints;
+    eloEpochAtMs = at;
   }
   /* One-time on sign-in: combine whatever's local with whatever's already
      in the cloud so neither side loses chunks, push the merged result
      back up, then attach live listeners for everything after. Sessions
-     union by id so nothing is lost either way. ELO can't be unioned like
-     that - it's a single number - and on a device's very first link there's
-     no shared checkpoint history to compare recency against yet (eloLinked
-     is still false), so this one time only, take the higher of the two
-     independent totals rather than either fully replacing the other; every
-     app open after that is a shared checkpoint and adoptEloCheckpoint's
-     recency check takes over instead. */
+     union by id so nothing is lost either way.
+
+     The ELO epoch gets the same one-time treatment, but for a different
+     reason: it isn't a number to merge at all, it's a single fact ("ELO
+     was X as of this instant") that either already exists for this
+     account or doesn't. If it exists, adopt it outright - it's immutable
+     from here on, so there's nothing to compare. If it doesn't, this
+     device is the first to link this account under the derived-ELO
+     design, so it seeds one from whichever side's old-style running total
+     is higher (same "can't be wrong-footed either way" reasoning the
+     sign-in merge always used for ELO), stamped with right now as the
+     point everything computed forward from sessions/active/settings
+     starts counting from. Every session logged and every minute of
+     idle/active time from that instant on is derived, never separately
+     synced - see accruedElo/liveElo - so this is the only ELO-related
+     write this file makes anywhere, ever, for a given account. */
   function migrateAndAttach(){
     Promise.all([ freshGet(userSessionsCol()), freshGet(userMetaDoc()) ]).then(function(results){
       var cloudSessions = results[0].docs.map(function(d){ return d.data(); });
@@ -1939,15 +1910,15 @@ input[type="time"], input[type="date"], select{
          moment it reopened, since local's stale in-progress object would
          win over the cloud's correct null. */
       if (cloudMeta && "active" in cloudMeta) active = cloudMeta.active || null;
-      if (cloudMeta && typeof cloudMeta.eloPoints === "number") {
-        if (eloLinked) {
-          adoptEloCheckpoint(cloudMeta);
-        } else if (cloudMeta.eloPoints > eloPoints) {
-          eloPoints = cloudMeta.eloPoints;
-          lastEloTickAt = eloPointsAtMillis(cloudMeta.eloPointsAt) || Date.now();
-        }
+
+      var epochExists = !!(cloudMeta && typeof cloudMeta.eloEpochPoints === "number" && cloudMeta.eloEpochAt);
+      if (epochExists) {
+        adoptEloEpoch(cloudMeta);
+      } else {
+        var legacyCloud = (cloudMeta && typeof cloudMeta.eloPoints === "number") ? cloudMeta.eloPoints : 0;
+        eloEpochPoints = Math.max(eloEpochPoints, legacyCloud, 0);
+        eloEpochAtMs = Date.now();
       }
-      eloLinked = true;
 
       animatedChunkIds = {};
       sessions.forEach(function(s){ animatedChunkIds[s.id] = true; });
@@ -1956,11 +1927,15 @@ input[type="time"], input[type="date"], select{
 
       var batch = db.batch();
       sessions.forEach(function(s){ batch.set(userSessionsCol().doc(s.id), s); });
-      batch.set(userMetaDoc(), { settings: settings, active: active, eloPoints: eloPoints, eloPointsAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+      var metaWrite = { settings: settings, active: active };
+      if (!epochExists) {
+        metaWrite.eloEpochPoints = eloEpochPoints;
+        metaWrite.eloEpochAt = firebase.firestore.FieldValue.serverTimestamp();
+      }
+      batch.set(userMetaDoc(), metaWrite, { merge: true });
       return batch.commit();
     }).catch(function(){}).then(function(){
       cloudReady = true;
-      eloSettleReady = true;
       attachCloud();
     });
   }
@@ -2004,7 +1979,6 @@ input[type="time"], input[type="date"], select{
       fbUser = user;
       renderAccountStatus();
       if (user) { migrateAndAttach(); syncAllSoundsWithCloud(); }
-      else { eloSettleReady = true; }
     });
     auth.getRedirectResult().then(function(result){
       if (result && result.user) showToast("Signed in as " + (result.user.email || "your account"));
@@ -2016,31 +1990,26 @@ input[type="time"], input[type="date"], select{
   document.getElementById("signOutBtn").addEventListener("click", signOutUser);
 
   /* A tab that's been hidden a while (phone screen off, app switched away)
-     can have a stale active/eloPoints in memory - mobile browsers throttle
-     both timers and the Firestore listener's network activity while
-     hidden, so neither tickElo's decay/gain math nor the live listener can
-     be trusted to have kept up. Rather than let it resume ticking on
-     whatever it last knew and push that, force a fresh server read the
-     moment it's visible again and only resume ticking from there.
-     adoptEloCheckpoint (not a raw overwrite) decides whether that read is
-     actually newer than what's already local - lastEloTickAt is NOT reset
-     to "now" here, since that's exactly what would make a stale read look
-     newest going forward; adoptEloCheckpoint already sets it correctly
-     (to the checkpoint's own timestamp) whenever it does adopt. */
+     can have stale active/settings in memory - mobile browsers throttle
+     the Firestore listener's network activity while hidden, so a chunk
+     ended (or a bonus window locked in) on another device while this tab
+     wasn't looking might not have arrived yet. Force a fresh server read
+     the moment it's visible again instead of waiting on the listener's own
+     schedule. ELO itself needs no equivalent resync: it's derived fresh
+     from sessions/active/settings/now on every render (see liveElo), so
+     once those are right, ELO already is too - there's no separate
+     checkpoint left that could itself be stale. */
   document.addEventListener("visibilitychange", function(){
     if (document.visibilityState !== "visible" || !fbUser || !cloudReady) return;
-    resyncingAfterHidden = true;
     userMetaDoc().get({ source: "server" }).then(function(doc){
       if (!doc.exists) return;
       var data = doc.data();
       if (data.settings) settings = migrateDoubleWindowShape(Object.assign(clone(DEFAULT_SETTINGS), data.settings));
       if ("active" in data) active = data.active || null;
-      adoptEloCheckpoint(data);
+      adoptEloEpoch(data);
       saveLocal();
       renderAll();
-    }).catch(function(){}).then(function(){
-      resyncingAfterHidden = false;
-    });
+    }).catch(function(){});
   });
 
   /* ---------------- reward cues: haptics + sound hook ---------------- */
@@ -2406,76 +2375,62 @@ input[type="time"], input[type="date"], select{
     tickElo(now);
   }
 
-  /* The live displayed ELO, extrapolated from the last settled checkpoint
-     (eloPoints as of lastEloTickAt) using whatever rate applies right now
-     - a pure read, no state mutated, so it's always safe to call, even
-     before eloSettleReady. This is what makes settling only occasional
-     (see settleElo) not cost anything visually: the meter still updates
-     every second regardless of when the checkpoint itself last moved. */
-  function liveElo(now){
-    var deltaSec = Math.max(0, (now.getTime() - lastEloTickAt) / 1000);
-    var ratePerMin = currentEloRatePerMinute(now);
-    return Math.max(0, eloPoints + ratePerMin * (deltaSec / 60));
+  /* Whether a chunk (completed or the one still running) covers the
+     instant `ms` - the "active" half of the rate table, extended over
+     history instead of just the live now. */
+  function sessionCoversMs(ms){
+    for (var i = 0; i < sessions.length; i++) {
+      var s = sessions[i];
+      if (ms >= new Date(s.startTime).getTime() && ms < new Date(s.endTime).getTime()) return true;
+    }
+    return false;
   }
-  /* Banks the current live value into the checkpoint itself (eloPoints,
-     lastEloTickAt) and saves it locally. Called right before anything
-     that changes the rate (active toggling) so the OLD rate's contribution
-     up to that exact moment isn't lost once the NEW rate takes over, and
-     from pushEloNow so what gets synced is the checkpoint as of the
-     moment it's sent, not a live-only value nothing else knows about.
-     Guarded by eloSettleReady itself, not just by its callers - a chunk
-     toggled in the split second before migrateAndAttach resolves would
-     otherwise stamp lastEloTickAt to "now" just as easily as tickElo's
-     own first call would, quietly reopening the exact bug eloSettleReady
-     exists to close. Skipping the settle here just means that one
-     boundary is attributed to the new rate instead of the old for a
-     moment - a rounding error, not a lost-progress bug. */
-  function settleElo(now){
-    if (!eloSettleReady) return;
-    eloPoints = liveElo(now);
-    lastEloTickAt = now.getTime();
-    saveLocal();
-  }
-  /* Pushes the checkpoint to Firestore right now, bypassing the tick
-     throttle - used at chunk start/end so the moments you'd actually
-     go check another device don't have to wait out the timer. Sends
-     eloPointsAt as FieldValue.serverTimestamp() (see eloPointsAtMillis)
-     so whichever device reads this later is comparing the server's clock,
-     not this device's own. Logs failures instead of swallowing them, so a
-     sync problem is at least visible in the console rather than silently
-     invisible. */
-  function pushEloNow(now){
-    if (!fbUser || !cloudReady) return;
-    now = now || new Date();
-    settleElo(now);
-    lastEloPushAt = now.getTime();
-    userMetaDoc().set({ eloPoints: eloPoints, eloPointsAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }).catch(function(err){
-      console.error("ELO sync failed:", err);
+  /* Sums decay/gain between fromMs and toMs by sweeping every point where
+     the rate could change - a session boundary (completed, or the one
+     currently in progress, open-ended up to toMs) or a double-window
+     boundary - so each resulting sub-interval sees exactly one,
+     unambiguous rate (mirroring currentEloRatePerMinute's table). This is
+     what liveElo below adds to the epoch instead of a continuously ticked
+     number: it needs nothing written anywhere to compute, since sessions
+     merge safely by id and active/settings only change via explicit,
+     infrequent user actions - there's no number left for two devices to
+     race over the way eloPoints once was. */
+  function accruedElo(fromMs, toMs){
+    if (toMs <= fromMs) return 0;
+    var points = [fromMs, toMs];
+    function clip(a, b){
+      if (b > fromMs && a < toMs) { points.push(Math.max(a, fromMs)); points.push(Math.min(b, toMs)); }
+    }
+    sessions.forEach(function(s){ clip(new Date(s.startTime).getTime(), new Date(s.endTime).getTime()); });
+    if (active) clip(new Date(active.startTime).getTime(), toMs);
+    (settings.doubleWindows || []).forEach(function(w){
+      if (w.startAt && w.endAt) clip(new Date(w.startAt).getTime(), new Date(w.endAt).getTime());
     });
+    points.sort(function(a, b){ return a - b; });
+    var total = 0;
+    for (var i = 0; i < points.length - 1; i++) {
+      var segStart = points[i], segEnd = points[i + 1];
+      if (segEnd <= segStart) continue;
+      var mid = (segStart + segEnd) / 2;
+      var isActiveHere = sessionCoversMs(mid) || (active && mid >= new Date(active.startTime).getTime());
+      var inWindow = isInDoubleWindow(new Date(mid), settings);
+      var rate = isActiveHere ? (inWindow ? 2 : 1) : (inWindow ? -0.5 : -0.1);
+      total += rate * ((segEnd - segStart) / 60000);
+    }
+    return total;
+  }
+  /* The live displayed ELO: the epoch baseline plus everything accrued
+     since, purely computed - no state mutated, nothing pushed, nothing to
+     reconcile. Two devices with different session/active/settings state
+     would show different numbers here, but that's just them not being
+     synced yet on the underlying data (which the listener/resync above
+     already handle) - once those agree, this is identical on every
+     device by construction, not by comparing timestamps and hoping. */
+  function liveElo(now){
+    return Math.max(0, eloEpochPoints + accruedElo(eloEpochAtMs, now.getTime()));
   }
   function tickElo(now){
-    /* renderEloMeter reads liveElo, a pure computation - always safe,
-       regardless of hidden/resync/eloSettleReady state, so the meter
-       keeps ticking visually even in the brief windows below where
-       actually settling the checkpoint isn't safe yet. */
     renderEloMeter(now);
-    /* A hidden tab isn't stopped, just throttled - setInterval(tick) keeps
-       firing (if less often), so without this it would keep settling and
-       pushing a checkpoint computed off whatever stale active/settings it
-       had when it went hidden (the live listener can be throttled too and
-       miss another device's update), clobbering real progress made
-       elsewhere while this tab wasn't looking. The visibilitychange resync
-       above only guards its own brief refetch window; this guard covers
-       the whole time the tab is hidden. eloSettleReady guards the other
-       end of the same problem: settling before migrateAndAttach has had
-       its one chance to compare the boot-time checkpoint against the
-       cloud's would stamp lastEloTickAt to "now" and make the cloud's
-       checkpoint permanently look older by definition, regardless of
-       which one is actually more complete. */
-    if (resyncingAfterHidden || document.visibilityState !== "visible" || !eloSettleReady) return;
-    var nowMs = now.getTime();
-    if (fbUser && cloudReady && nowMs - lastEloPushAt > 8000) { pushEloNow(now); return; }
-    if (nowMs - lastEloTickAt > 8000) settleElo(now);
   }
 
   function renderToggle(){
@@ -2885,12 +2840,10 @@ input[type="time"], input[type="date"], select{
   /* ---------------- toggle button ---------------- */
   els.toggleBtn.addEventListener("click", function(){
     if (!active) {
-      settleElo(new Date());
       persistActive({ startTime: new Date().toISOString() });
       playSound("start");
       buzz(15);
       renderAll();
-      pushEloNow();
     } else {
       openJournal();
     }
@@ -3002,14 +2955,12 @@ input[type="time"], input[type="date"], select{
       journal: text
     };
     persistNewSession(session);
-    settleElo(endTime);
     persistActive(null);
     active = null;
     playSound("complete");
     buzz([15,40,25]);
     closeJournal();
     renderAll();
-    pushEloNow();
     flashAchievement();
     showToast(todayStatText());
     if (pendingRankUp) {
