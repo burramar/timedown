@@ -973,6 +973,23 @@ input[type="time"], input[type="date"], select{
 }
 .stat-label{font-size:0.76rem;color:var(--ink-soft);}
 
+.range-row{display:flex;gap:6px;}
+.range-btn{
+  flex:1 1 0;
+  min-width:0;
+  padding:7px 4px;
+  font-size:0.78rem;
+  font-family:inherit;
+  text-align:center;
+  color:var(--ink-soft);
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:8px;
+  cursor:pointer;
+}
+.range-btn:hover{color:var(--ink);}
+.range-btn.active{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+
 .stat-chart{
   display:flex;
   align-items:stretch;
@@ -1465,14 +1482,24 @@ input[type="time"], input[type="date"], select{
     </section>
 
     <section class="panel-section">
-      <h3>Last 7 days</h3>
+      <div class="range-row" id="statRangeRow" role="tablist" aria-label="Stats date range">
+        <button class="range-btn" type="button" data-range="week">Week</button>
+        <button class="range-btn" type="button" data-range="month">Month</button>
+        <button class="range-btn" type="button" data-range="3m">3M</button>
+        <button class="range-btn" type="button" data-range="6m">6M</button>
+        <button class="range-btn" type="button" data-range="year">Year</button>
+      </div>
+    </section>
+
+    <section class="panel-section">
+      <h3 id="statChartTitle">Last 7 days</h3>
       <div class="stat-chart" id="statChart"></div>
     </section>
 
     <section class="panel-section">
       <h3>Relative productivity</h3>
-      <p class="hint">Time logged that day, divided by time available that day (day length minus school hours).</p>
-      <svg class="stat-line-chart" id="statLineChart" viewBox="0 0 300 84" role="img" aria-label="Relative productivity over the last 7 days"></svg>
+      <p class="hint">Time logged each period, divided by time available (day length minus school hours).</p>
+      <svg class="stat-line-chart" id="statLineChart" viewBox="0 0 300 84" role="img" aria-label="Relative productivity over time"></svg>
     </section>
 
     <section class="panel-section">
@@ -2829,6 +2856,117 @@ input[type="time"], input[type="date"], select{
   function fmtShortDate(key){
     return new Date(key + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
   }
+  /* Ranges for the stats charts. "week"/"month" bucket by calendar day,
+     "3m"/"6m" bucket into 7-day chunks (days is a multiple of 7 so every
+     chunk is full), "year" buckets by calendar month so bars line up with
+     real months instead of arbitrary 30-day windows. */
+  var STATS_RANGES = {
+    week:  { days: 7,   bucket: "day",   title: "Last 7 days" },
+    month: { days: 30,  bucket: "day",   title: "Last 30 days" },
+    "3m":  { days: 91,  bucket: "week",  title: "Last 3 months" },
+    "6m":  { days: 182, bucket: "week",  title: "Last 6 months" },
+    year:  { days: 365, bucket: "month", title: "Last 12 months" }
+  };
+  var statsRange = "week";
+  function getRangeBuckets(range){
+    var cycle = getCycle(new Date(), settings);
+    var todayKey = dateKey(cycle.cycleStart);
+    var secByDay = {};
+    sessions.forEach(function(s){ secByDay[s.date] = (secByDay[s.date] || 0) + (s.durationSec || 0); });
+
+    var daily = [];
+    if (range.bucket === "month") {
+      /* Align to exactly 12 trailing calendar months (not a fixed day
+         count) so "year" always lands on 12 bars instead of leaking into
+         a 13th partial month depending on where in the month today falls. */
+      var start = new Date(cycle.cycleStart.getFullYear(), cycle.cycleStart.getMonth() - 11, 1);
+      for (var d = start; d <= cycle.cycleStart; d = addDays(d, 1)) {
+        var key = dateKey(d);
+        daily.push({
+          date: d, key: key,
+          productiveSec: secByDay[key] || 0,
+          availableSec: getAvailableSecForDay(d, settings),
+          isToday: key === todayKey
+        });
+      }
+    } else {
+      for (var i = range.days - 1; i >= 0; i--) {
+        var d2 = addDays(cycle.cycleStart, -i);
+        var key2 = dateKey(d2);
+        daily.push({
+          date: d2, key: key2,
+          productiveSec: secByDay[key2] || 0,
+          availableSec: getAvailableSecForDay(d2, settings),
+          isToday: key2 === todayKey
+        });
+      }
+    }
+
+    var buckets;
+    if (range.bucket === "day") {
+      buckets = daily.map(function(d){
+        return {
+          key: d.key,
+          label: range.days <= 7 ? d.date.toLocaleDateString(undefined, { weekday: "narrow" }) : String(d.date.getDate()),
+          shortDate: fmtShortDate(d.key),
+          minutes: Math.round(d.productiveSec / 60),
+          ratio: d.availableSec > 0 ? Math.min(1, d.productiveSec / d.availableSec) : 0,
+          isToday: d.isToday
+        };
+      });
+    } else if (range.bucket === "month") {
+      var byMonth = {}, order = [];
+      daily.forEach(function(d){
+        var mk = d.date.getFullYear() + "-" + pad(d.date.getMonth() + 1);
+        if (!byMonth[mk]) { byMonth[mk] = { key: mk, date: d.date, productiveSec: 0, availableSec: 0, isToday: false }; order.push(mk); }
+        byMonth[mk].productiveSec += d.productiveSec;
+        byMonth[mk].availableSec += d.availableSec;
+        if (d.isToday) byMonth[mk].isToday = true;
+      });
+      buckets = order.map(function(mk){
+        var b = byMonth[mk];
+        return {
+          key: b.key,
+          label: b.date.toLocaleDateString(undefined, { month: "short" }),
+          shortDate: b.date.toLocaleDateString(undefined, { month: "short", year: "numeric" }),
+          minutes: Math.round(b.productiveSec / 60),
+          ratio: b.availableSec > 0 ? Math.min(1, b.productiveSec / b.availableSec) : 0,
+          isToday: b.isToday
+        };
+      });
+    } else {
+      buckets = [];
+      for (var i2 = 0; i2 < daily.length; i2 += 7) {
+        var chunk = daily.slice(i2, i2 + 7);
+        var productiveSec = chunk.reduce(function(s, d){ return s + d.productiveSec; }, 0);
+        var availableSec = chunk.reduce(function(s, d){ return s + d.availableSec; }, 0);
+        var isToday = chunk.some(function(d){ return d.isToday; });
+        var first = chunk[0], last = chunk[chunk.length - 1];
+        buckets.push({
+          key: first.key,
+          label: first.date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+          shortDate: first.date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + "–" + last.date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+          minutes: Math.round(productiveSec / 60),
+          ratio: availableSec > 0 ? Math.min(1, productiveSec / availableSec) : 0,
+          isToday: isToday
+        });
+      }
+    }
+
+    /* Thin the x-axis labels down, evenly spaced (rather than every Nth,
+       which can round two adjacent indices next to each other). Day-bucket
+       labels are a bare day number so more can fit; week/month-bucket
+       labels are wider ("17 Jun") and need more breathing room. */
+    var maxLabels = range.bucket === "day" ? 8 : 6;
+    var desired = Math.min(buckets.length, maxLabels);
+    var shown = {};
+    for (var k = 0; k < desired; k++) {
+      var idx = desired > 1 ? Math.round(k * (buckets.length - 1) / (desired - 1)) : 0;
+      shown[idx] = true;
+    }
+    buckets.forEach(function(d, i){ d.showLabel = !!shown[i]; });
+    return buckets;
+  }
   function getDayTotals(days){
     var cycle = getCycle(new Date(), settings);
     var todayKey = dateKey(cycle.cycleStart);
@@ -2884,12 +3022,16 @@ input[type="time"], input[type="date"], select{
       if (secByDay[k] > bestDaySec) { bestDaySec = secByDay[k]; bestDayKey = k; }
     });
 
+    var range = STATS_RANGES[statsRange] || STATS_RANGES.week;
+
     return {
       week: week, weekMinutes: weekMinutes, weekSessions: weekSessions,
       todayMinutes: today.minutes, todayChunks: todayChunks,
       longestSessionSec: longestSessionSec, totalSec: totalSec,
       bestDayKey: bestDayKey, bestDaySec: bestDaySec,
-      longestStreak: computeLongestStreak()
+      longestStreak: computeLongestStreak(),
+      chartBuckets: getRangeBuckets(range),
+      rangeTitle: range.title
     };
   }
   function renderStatsPanel(){
@@ -2903,10 +3045,12 @@ input[type="time"], input[type="date"], select{
     document.getElementById("statBestDay").textContent = stats.bestDayKey ? (fmtDuration(stats.bestDaySec) + " · " + fmtShortDate(stats.bestDayKey)) : "—";
     document.getElementById("statTotalTime").textContent = stats.totalSec ? fmtDuration(stats.totalSec) : "—";
 
+    document.getElementById("statChartTitle").textContent = stats.rangeTitle;
+
     var chart = document.getElementById("statChart");
     chart.innerHTML = "";
-    var max = Math.max(1, Math.max.apply(null, stats.week.map(function(d){ return d.minutes; })));
-    stats.week.forEach(function(d){
+    var max = Math.max(1, Math.max.apply(null, stats.chartBuckets.map(function(d){ return d.minutes; })));
+    stats.chartBuckets.forEach(function(d){
       var col = document.createElement("div");
       col.className = "stat-bar-col";
       var track = document.createElement("div");
@@ -2914,17 +3058,18 @@ input[type="time"], input[type="date"], select{
       var fill = document.createElement("div");
       fill.className = "stat-bar-fill" + (d.isToday ? " today" : "");
       fill.style.height = Math.max(3, (d.minutes / max) * 100) + "%";
-      fill.title = d.minutes + " min";
+      fill.title = d.minutes + " min · " + d.shortDate;
       track.appendChild(fill);
       var label = document.createElement("span");
       label.className = "stat-bar-label" + (d.isToday ? " today" : "");
-      label.textContent = d.label;
+      label.textContent = d.showLabel ? d.label : "";
       col.appendChild(track);
       col.appendChild(label);
       chart.appendChild(col);
     });
 
-    renderProductivityChart(stats.week);
+    renderProductivityChart(stats.chartBuckets);
+    document.getElementById("statLineChart").setAttribute("aria-label", "Relative productivity, " + stats.rangeTitle.toLowerCase());
   }
 
   function renderProductivityChart(days){
@@ -2949,19 +3094,36 @@ input[type="time"], input[type="date"], select{
     var points = days.map(function(d, i){ return xFor(i) + "," + yFor(d.ratio); }).join(" ");
     parts.push('<polyline points="' + points + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>');
 
+    var dotR = n > 14 ? 1.6 : 2.2;
     days.forEach(function(d, i){
       var x = xFor(i), y = yFor(d.ratio);
-      var r = d.isToday ? 3.4 : 2.2;
+      var r = d.isToday ? dotR + 1.2 : dotR;
       var fill = d.isToday ? "var(--accent-strong)" : "var(--accent)";
-      parts.push('<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="' + fill + '"><title>' + Math.round(d.ratio * 100) + '% on ' + d.shortDate + '</title></circle>');
-      var labelFill = d.isToday ? "var(--accent-strong)" : "var(--ink-faint)";
-      var labelWeight = d.isToday ? "600" : "400";
-      parts.push('<text x="' + x + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" font-weight="' + labelWeight + '" fill="' + labelFill + '">' + d.label + '</text>');
+      parts.push('<circle cx="' + x + '" cy="' + y + '" r="' + r + '" fill="' + fill + '"><title>' + Math.round(d.ratio * 100) + '% · ' + d.shortDate + '</title></circle>');
+      if (d.showLabel) {
+        var labelFill = d.isToday ? "var(--accent-strong)" : "var(--ink-faint)";
+        var labelWeight = d.isToday ? "600" : "400";
+        parts.push('<text x="' + x + '" y="' + (H - 4) + '" text-anchor="middle" font-size="9" font-weight="' + labelWeight + '" fill="' + labelFill + '">' + d.label + '</text>');
+      }
     });
 
     svg.setAttribute("viewBox", "0 0 " + W + " " + H);
     svg.innerHTML = parts.join("");
   }
+
+  var statRangeRow = document.getElementById("statRangeRow");
+  Array.prototype.forEach.call(statRangeRow.querySelectorAll(".range-btn"), function(btn){
+    if (btn.dataset.range === statsRange) btn.classList.add("active");
+  });
+  statRangeRow.addEventListener("click", function(e){
+    var btn = e.target.closest(".range-btn");
+    if (!btn || btn.classList.contains("active")) return;
+    statsRange = btn.dataset.range;
+    Array.prototype.forEach.call(statRangeRow.querySelectorAll(".range-btn"), function(b){
+      b.classList.toggle("active", b === btn);
+    });
+    renderStatsPanel();
+  });
 
   var statsOverlay = document.getElementById("statsOverlay");
   function openStats(){ renderStatsPanel(); statsOverlay.hidden = false; }
@@ -3303,7 +3465,7 @@ input[type="time"], input[type="date"], select{
       var d = new Date(k+"T00:00:00");
       var dtxt = d.toLocaleDateString(undefined, { month:"short", day:"numeric" });
       var desc = ov.type === "none" ? "no school" : (ov.type === "custom" ? (ov.start+"–"+ov.end) : "back to routine");
-      label.textContent = dtxt + " — " + desc;
+      label.textContent = dtxt + " · " + desc;
       var del = document.createElement("button");
       del.className = "ov-del"; del.type = "button"; del.textContent = "×";
       del.setAttribute("aria-label", "Remove override for " + dtxt);
