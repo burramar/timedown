@@ -1539,6 +1539,32 @@ input[type="time"], input[type="date"], select{
     if (sleepAbs <= wakeAbs || cycleEnd <= cycleStart) cycleEnd = addDays(cycleEnd, 1);
     return { cycleStart: cycleStart, cycleEnd: cycleEnd };
   }
+  /* True between wakeTime and sleepTime (the cycle computed for `now`
+     itself already anchors to whichever waking day `now` belongs to, so
+     this needs no separate cross-midnight handling of its own - a 2am
+     check correctly resolves to yesterday's cycle and comes back false). */
+  function isAwake(now, settings){
+    var cycle = getCycle(now, settings);
+    return now >= cycle.cycleStart && now < cycle.cycleEnd;
+  }
+  function isSleepHours(now, settings){ return !isAwake(now, settings); }
+  /* Every cycleStart/cycleEnd instant strictly inside (fromMs, toMs), so
+     accruedElo's sweep can tell awake from asleep the same way the live
+     rate does - walks one day at a time since wake/sleep times are a
+     setting that could itself change over a long span (nothing needs that
+     precision today, but there's no reason to assume it can't). */
+  function cycleBoundariesBetween(fromMs, toMs, settings){
+    var pts = [];
+    var day = getCycle(new Date(fromMs), settings).cycleStart;
+    while (day.getTime() < toMs) {
+      var cycle = getCycle(day, settings);
+      var s = cycle.cycleStart.getTime(), e = cycle.cycleEnd.getTime();
+      if (s > fromMs && s < toMs) pts.push(s);
+      if (e > fromMs && e < toMs) pts.push(e);
+      day = addDays(day, 1);
+    }
+    return pts;
+  }
 
   function getSchoolBlock(cycleStart, settings){
     var key = dateKey(cycleStart);
@@ -1736,17 +1762,24 @@ input[type="time"], input[type="date"], select{
      (currentEloRatePerMinute, driven by the live active/now) and the
      historical sweep (accruedElo, driven by whether a session covered
      some past instant) need the exact same table, so a future rate
-     tweak can't be made in one and forgotten in the other. School hours
-     override everything else - ELO is meant to be completely frozen
-     during class, not just decaying slower, so it's checked first and
-     short-circuits before active/window even matter. */
-  function eloRateFor(isActiveNow, inWindow, inSchool){
+     tweak can't be made in one and forgotten in the other.
+
+     School hours freeze the rate outright, gain included - ELO is meant
+     to be completely frozen during class, not just decaying slower, so
+     it's checked first and short-circuits before active/window even
+     matter. Sleep hours only suppress the idle penalty: unlike school,
+     there's no reason a chunk that's still genuinely running into your
+     configured sleep window shouldn't keep earning at the normal rate -
+     what shouldn't happen is being punished for being asleep while
+     nothing's running, which is exactly the idle branch below. */
+  function eloRateFor(isActiveNow, inWindow, inSchool, sleeping){
     if (inSchool) return 0;
     if (isActiveNow) return inWindow ? 2 : 1;
+    if (sleeping) return 0;
     return inWindow ? -0.5 : -0.3;
   }
   function currentEloRatePerMinute(now){
-    return eloRateFor(!!active, isInDoubleWindow(now, settings), isInSchoolHours(now, settings));
+    return eloRateFor(!!active, isInDoubleWindow(now, settings), isInSchoolHours(now, settings), isSleepHours(now, settings));
   }
 
   /* ---------------- storage (this device only) ---------------- */
@@ -2474,10 +2507,11 @@ input[type="time"], input[type="date"], select{
   /* Sums decay/gain between fromMs and toMs by sweeping every point where
      the rate could change - a session boundary (completed, or the one
      currently in progress, open-ended up to toMs), a double-window
-     boundary, or a school-hours boundary - so each resulting sub-interval
-     sees exactly one, unambiguous rate (via eloRateFor, the same table
-     currentEloRatePerMinute uses). This is what liveElo below adds to the
-     epoch instead of a continuously ticked number: it needs nothing
+     boundary, a school-hours boundary, or a wake/sleep cycle boundary -
+     so each resulting sub-interval sees exactly one, unambiguous rate
+     (via eloRateFor, the same table currentEloRatePerMinute uses). This
+     is what liveElo below adds to the epoch instead of a continuously
+     ticked number: it needs nothing
      written anywhere to compute, since sessions merge safely by id and
      active/settings only change via explicit, infrequent user actions -
      there's no number left for two devices to race over the way
@@ -2500,6 +2534,7 @@ input[type="time"], input[type="date"], select{
       clip(parseMs(w.startAt), parseMs(w.endAt));
     });
     schoolRangesBetween(fromMs, toMs, settings).forEach(function(r){ clip(r.start, r.end); });
+    cycleBoundariesBetween(fromMs, toMs, settings).forEach(function(t){ points.push(t); });
     points.sort(function(a, b){ return a - b; });
     var activeStart = active ? parseMs(active.startTime) : null;
     var total = 0;
@@ -2510,7 +2545,8 @@ input[type="time"], input[type="date"], select{
       var isActiveHere = sessionCoversMs(mid) || (activeStart !== null && mid >= activeStart);
       var inWindow = isInDoubleWindow(new Date(mid), settings);
       var inSchool = isInSchoolHours(new Date(mid), settings);
-      var rate = eloRateFor(isActiveHere, inWindow, inSchool);
+      var sleeping = isSleepHours(new Date(mid), settings);
+      var rate = eloRateFor(isActiveHere, inWindow, inSchool, sleeping);
       total += rate * ((segEnd - segStart) / 60000);
     }
     return total;
