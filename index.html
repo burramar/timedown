@@ -1137,7 +1137,7 @@ input[type="time"], input[type="date"], select{
 
     <div class="double-window-panel" id="doubleWindowPanel">
       <div class="double-window-panel-inner">
-        <p class="hint">Lock in a window: stay in a chunk during it for double ELO, or lose ELO five times as fast if you're not. Once it's locked in, it can't be changed or cancelled - you'll face whatever you set.</p>
+        <p class="hint">Lock in a window: stay in a chunk during it for +2 ELO/min, or lose it at the same rate if you're not. Once it's locked in, it can't be changed or cancelled - you'll face whatever you set.</p>
 
         <div id="dwEditable">
           <div class="two-col">
@@ -1672,7 +1672,7 @@ input[type="time"], input[type="date"], select{
   }
 
   /* ---------------- rank / ELO ----------------
-     +1 ELO/min while in a chunk, -0.3/min otherwise; +2/-0.5 inside the
+     +1 ELO/min while in a chunk, -0.3/min otherwise; +2/-2 inside the
      double window. Each rank's point span grows superlinearly so later
      ranks take dramatically longer than early ones. */
   var RANKS = ["Copper","Iron","Quartz","Titanium","Obsidian","Emerald","Sapphire","Alexandrite","Painite"];
@@ -1803,7 +1803,7 @@ input[type="time"], input[type="date"], select{
     if (inSchool) return 0;
     if (isActiveNow) return inWindow ? 2 : 1;
     if (sleeping) return 0;
-    return inWindow ? -0.5 : -0.3;
+    return inWindow ? -2 : -0.3;
   }
   function currentEloRatePerMinute(now){
     return eloRateFor(!!active, isInDoubleWindow(now, settings), isInSchoolHours(now, settings), isSleepHours(now, settings));
@@ -3217,7 +3217,7 @@ input[type="time"], input[type="date"], select{
       return;
     }
     showConfirm(
-      "You'll get double ELO for staying in a chunk during this window, or lose it five times as fast if you're not. Once locked in, this cannot be changed or cancelled.",
+      "You'll get +2 ELO/min for staying in a chunk during this window, or lose it at the same rate if you're not. Once locked in, this cannot be changed or cancelled.",
       { title: "Lock in " + fmtTime(parseHM(startVal)) + " – " + fmtTime(parseHM(endVal)) + "?", okLabel: "Lock it in" }
     ).then(function(ok){
       if (!ok) return;
