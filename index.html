@@ -325,7 +325,7 @@ button{font-family:inherit;}
 }
 .double-window-panel.open{
   margin-top:0;
-  max-height:280px;
+  max-height:460px;
   opacity:1;
 }
 .double-window-panel-inner{
@@ -335,13 +335,22 @@ button{font-family:inherit;}
   padding-top:2px;
 }
 #dwEditable{display:flex;flex-direction:column;gap:10px;}
-.dw-locked-range{
+.dw-locked-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;}
+.dw-locked-item{
   font-family:"IBM Plex Mono", ui-monospace, monospace;
   font-variant-numeric:tabular-nums;
-  font-size:1rem;
+  font-size:0.92rem;
   font-weight:600;
+  color:var(--ink-soft);
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:8px 10px;
+}
+.dw-locked-item.active{
   color:var(--accent-strong);
-  margin:0;
+  border-color:var(--accent);
+  background:var(--accent-soft);
 }
 @media (prefers-reduced-motion: reduce){
   .double-window-panel{transition:opacity .2s ease;}
@@ -1139,6 +1148,11 @@ input[type="time"], input[type="date"], select{
       <div class="double-window-panel-inner">
         <p class="hint">Lock in a window: stay in a chunk during it for +2 ELO/min, or lose it at the same rate if you're not. Once it's locked in, it can't be changed or cancelled - you'll face whatever you set.</p>
 
+        <div id="dwLockedList" hidden>
+          <ul class="dw-locked-list" id="dwLockedItems"></ul>
+          <p class="hint">Locked in - no changes, no cancelling, until each passes.</p>
+        </div>
+
         <div id="dwEditable">
           <div class="two-col">
             <div class="field-row">
@@ -1154,13 +1168,7 @@ input[type="time"], input[type="date"], select{
           <p class="hint" id="dwRemainingHint"></p>
         </div>
 
-        <div id="dwLocked" hidden>
-          <p class="dw-locked-range" id="dwLockedRange"></p>
-          <p class="hint">Locked in - no changes, no cancelling, until it passes.</p>
-        </div>
-
         <div id="dwExhausted" hidden>
-          <p class="dw-locked-range">No windows left today</p>
           <p class="hint">You've used all 3 double windows for today - more open up tomorrow.</p>
         </div>
       </div>
@@ -1754,19 +1762,23 @@ input[type="time"], input[type="date"], select{
     }
     return false;
   }
-  /* The soonest not-yet-ended commitment (upcoming or currently active) -
-     while one exists, the panel shows it locked instead of the form,
-     exactly as before. Returns null once every commitment has passed. */
-  function pendingDoubleWindow(settings, now){
+  /* Every not-yet-ended commitment (upcoming or currently active), oldest
+     start first - the panel lists all of these as locked while still
+     showing the form underneath, so a second or third window for today
+     can be planned ahead instead of waiting for the first to pass. */
+  function upcomingDoubleWindows(settings, now){
     now = now || new Date();
     var list = (settings.doubleWindows) || [];
-    var soonest = null;
-    for (var i = 0; i < list.length; i++) {
-      var dw = list[i];
-      if (!dw.endAt || now >= new Date(dw.endAt)) continue;
-      if (!soonest || new Date(dw.startAt) < new Date(soonest.startAt)) soonest = dw;
-    }
-    return soonest;
+    return list.filter(function(dw){ return dw.startAt && dw.endAt && now < new Date(dw.endAt); })
+      .sort(function(a, b){ return new Date(a.startAt) - new Date(b.startAt); });
+  }
+  /* True if [startDT,endDT) would share any time with a window that
+     hasn't ended yet - lets a second/third lock-in be validated against
+     the first instead of silently overlapping it. */
+  function overlapsUpcomingDoubleWindow(settings, startDT, endDT, now){
+    return upcomingDoubleWindows(settings, now).some(function(dw){
+      return startDT < new Date(dw.endAt) && endDT > new Date(dw.startAt);
+    });
   }
   /* How many windows were locked in during the app-day (wake-to-sleep
      cycle, same boundary used for "today"'s stats/streak) that `now`
@@ -3172,17 +3184,27 @@ input[type="time"], input[type="date"], select{
      chained back-to-back all day. */
   var doubleWindowPanelOpen = false;
   function renderDoubleWindowUI(){
-    var pending = pendingDoubleWindow(settings);
-    var usedToday = doubleWindowsUsedToday(settings);
-    var exhausted = !pending && usedToday >= MAX_DOUBLE_WINDOWS_PER_DAY;
-    document.getElementById("doubleWindowToggle").classList.toggle("enabled", !!pending);
-    document.getElementById("dwEditable").hidden = !!pending || exhausted;
-    document.getElementById("dwLocked").hidden = !pending;
+    var now = new Date();
+    var upcoming = upcomingDoubleWindows(settings, now);
+    var usedToday = doubleWindowsUsedToday(settings, now);
+    var exhausted = usedToday >= MAX_DOUBLE_WINDOWS_PER_DAY;
+    document.getElementById("doubleWindowToggle").classList.toggle("enabled", upcoming.length > 0);
+
+    var listWrap = document.getElementById("dwLockedList");
+    listWrap.hidden = upcoming.length === 0;
+    var itemsEl = document.getElementById("dwLockedItems");
+    itemsEl.innerHTML = "";
+    upcoming.forEach(function(dw){
+      var li = document.createElement("li");
+      var isActive = new Date(dw.startAt) <= now;
+      li.className = "dw-locked-item" + (isActive ? " active" : "");
+      li.textContent = fmtTime(parseHM(dw.start)) + " – " + fmtTime(parseHM(dw.end)) + (isActive ? " (live)" : "");
+      itemsEl.appendChild(li);
+    });
+
+    document.getElementById("dwEditable").hidden = exhausted;
     document.getElementById("dwExhausted").hidden = !exhausted;
-    if (pending) {
-      document.getElementById("dwLockedRange").textContent =
-        fmtTime(parseHM(pending.start)) + " – " + fmtTime(parseHM(pending.end));
-    } else if (!exhausted) {
+    if (!exhausted) {
       var left = MAX_DOUBLE_WINDOWS_PER_DAY - usedToday;
       document.getElementById("dwRemainingHint").textContent =
         left + " of " + MAX_DOUBLE_WINDOWS_PER_DAY + " double windows left today.";
@@ -3192,10 +3214,19 @@ input[type="time"], input[type="date"], select{
     doubleWindowPanelOpen = !doubleWindowPanelOpen;
     document.getElementById("doubleWindowToggle").setAttribute("aria-expanded", doubleWindowPanelOpen ? "true" : "false");
     document.getElementById("doubleWindowPanel").classList.toggle("open", doubleWindowPanelOpen);
-    if (doubleWindowPanelOpen && !pendingDoubleWindow(settings)) {
+    if (doubleWindowPanelOpen) {
       var now = new Date();
-      document.getElementById("dwStart").value = hmValue(now);
-      document.getElementById("dwEnd").value = hmValue(new Date(now.getTime() + 50*60*1000));
+      var upcoming = upcomingDoubleWindows(settings, now);
+      /* Default the form to right after the last window already locked
+         in today, so planning a second or third one doesn't require
+         manually dodging the first by hand. */
+      var base = now;
+      upcoming.forEach(function(dw){
+        var end = new Date(dw.endAt);
+        if (end > base) base = end;
+      });
+      document.getElementById("dwStart").value = hmValue(base);
+      document.getElementById("dwEnd").value = hmValue(new Date(base.getTime() + 50*60*1000));
     }
   }
   document.getElementById("doubleWindowToggle").addEventListener("click", toggleDoubleWindowPanel);
@@ -3214,6 +3245,10 @@ input[type="time"], input[type="date"], select{
     if (endDT <= startDT) endDT = addDays(endDT, 1);
     if (endDT <= now) {
       showToast("That time has already passed today");
+      return;
+    }
+    if (overlapsUpcomingDoubleWindow(settings, startDT, endDT, now)) {
+      showToast("That overlaps a window you've already locked in");
       return;
     }
     showConfirm(
