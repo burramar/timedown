@@ -3049,15 +3049,24 @@ input[type="time"], input[type="date"], select{
 
     var chart = document.getElementById("statChart");
     chart.innerHTML = "";
+    var n = stats.chartBuckets.length;
+    /* A fixed 8px gap works for 7 wide bars but eats most of the row once
+       there are 20-30 of them, leaving hairlines - so both the gap and the
+       corner radius shrink as the bar count grows. */
+    var gap = n > 20 ? 2 : (n > 12 ? 4 : 8);
+    var radius = n > 20 ? 2 : (n > 12 ? 3 : 6);
+    chart.style.gap = gap + "px";
     var max = Math.max(1, Math.max.apply(null, stats.chartBuckets.map(function(d){ return d.minutes; })));
     stats.chartBuckets.forEach(function(d){
       var col = document.createElement("div");
       col.className = "stat-bar-col";
       var track = document.createElement("div");
       track.className = "stat-bar-track";
+      track.style.borderRadius = radius + "px";
       var fill = document.createElement("div");
       fill.className = "stat-bar-fill" + (d.isToday ? " today" : "");
       fill.style.height = Math.max(3, (d.minutes / max) * 100) + "%";
+      fill.style.borderRadius = radius + "px " + radius + "px 0 0";
       fill.title = d.minutes + " min · " + d.shortDate;
       track.appendChild(fill);
       var label = document.createElement("span");
