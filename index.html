@@ -1003,7 +1003,7 @@ input[type="time"], input[type="date"], select{
   display:flex;
   flex-direction:column;
   align-items:center;
-  gap:6px;
+  gap:10px;
 }
 .stat-bar-track{
   flex:1;
@@ -3065,7 +3065,10 @@ input[type="time"], input[type="date"], select{
       track.style.borderRadius = radius + "px";
       var fill = document.createElement("div");
       fill.className = "stat-bar-fill" + (d.isToday ? " today" : "");
-      fill.style.height = Math.max(3, (d.minutes / max) * 100) + "%";
+      /* Only floor to a visible sliver when there's actually time logged -
+         a true zero should show as an empty track, not a stray mark that
+         reads as a dashed line running under the axis labels. */
+      fill.style.height = d.minutes > 0 ? Math.max(3, (d.minutes / max) * 100) + "%" : "0%";
       fill.style.borderRadius = radius + "px " + radius + "px 0 0";
       fill.title = d.minutes + " min · " + d.shortDate;
       track.appendChild(fill);
